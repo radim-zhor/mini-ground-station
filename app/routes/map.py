@@ -4,12 +4,16 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
+import jinja2
 from fastapi.templating import Jinja2Templates
 
 from shared.tle import current_positions
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"), cache_size=0)
+_tmpl_dir = str(Path(__file__).parent.parent / "templates")
+templates = Jinja2Templates(env=jinja2.Environment(
+    loader=jinja2.FileSystemLoader(_tmpl_dir), autoescape=True, cache_size=0
+))
 
 _TZ = ZoneInfo("Europe/Prague")
 

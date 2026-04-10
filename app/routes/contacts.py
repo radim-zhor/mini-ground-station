@@ -6,6 +6,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
+import jinja2
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from zoneinfo import ZoneInfo
@@ -14,7 +15,10 @@ from app.database import get_db
 from shared.models import Contact
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"), cache_size=0)
+_tmpl_dir = str(Path(__file__).parent.parent / "templates")
+templates = Jinja2Templates(env=jinja2.Environment(
+    loader=jinja2.FileSystemLoader(_tmpl_dir), autoescape=True, cache_size=0
+))
 
 IMAGES_DIR = Path(__file__).parent.parent / "static" / "images"
 _TZ = ZoneInfo("Europe/Prague")
