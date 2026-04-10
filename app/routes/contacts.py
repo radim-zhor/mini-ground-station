@@ -14,7 +14,7 @@ from app.database import get_db
 from shared.models import Contact
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"), cache_size=0)
 
 IMAGES_DIR = Path(__file__).parent.parent / "static" / "images"
 _TZ = ZoneInfo("Europe/Prague")
