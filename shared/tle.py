@@ -145,7 +145,10 @@ def current_positions() -> list[SatPosition]:
     # Refresh minutes_until so it's current
     for p in passes:
         p.minutes_until = int((p.aos - now_dt).total_seconds() / 60)
-    next_pass_map = {p.satellite: p for p in passes if p.minutes_until > -(p.duration_s / 60)}
+    next_pass_map: dict[str, PassInfo] = {}
+    for p in passes:
+        if p.minutes_until > -(p.duration_s / 60) and p.satellite not in next_pass_map:
+            next_pass_map[p.satellite] = p
 
     result = []
     for satellite in satellites:
