@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini Ground Station — Dashboard</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0e1a;
+            color: #c8d8e8;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        header {
+            display: flex;
+            align-items: baseline;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            color: #4fc3f7;
+            font-size: 1.3rem;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+
+        nav a {
+            color: #546e7a;
+            text-decoration: none;
+            font-size: 0.8rem;
+            letter-spacing: 1px;
+        }
+
+        nav a:hover { color: #4fc3f7; }
+        nav a.active { color: #4fc3f7; }
+
+        .empty {
+            color: #37474f;
+            padding: 2rem 0;
+            font-size: 0.85rem;
+        }
+
+        .contact-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1.2rem;
+            max-width: 900px;
+        }
+
+        .contact-card {
+            background: #0f1624;
+            border: 1px solid #1e3a5f;
+            border-radius: 4px;
+            overflow: hidden;
+            transition: border-color 0.15s;
+        }
+
+        .contact-card:hover { border-color: #4fc3f7; }
+
+        .contact-header {
+            padding: 0.8rem 1.2rem;
+            display: grid;
+            grid-template-columns: 1fr auto;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .sat-name {
+            color: #4fc3f7;
+            font-size: 1rem;
+            font-weight: bold;
+        }
+
+        .contact-meta {
+            color: #546e7a;
+            font-size: 0.75rem;
+            margin-top: 0.25rem;
+            line-height: 1.7;
+        }
+
+        .contact-meta span { color: #c8d8e8; }
+
+        .badges {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 0.3rem;
+        }
+
+        .badge {
+            font-size: 0.72rem;
+            padding: 0.15rem 0.5rem;
+            border-radius: 3px;
+            background: #1e3a5f;
+            color: #4fc3f7;
+            white-space: nowrap;
+        }
+
+        .badge.snr-good  { background: #1b3a2a; color: #81c784; }
+        .badge.snr-ok    { background: #2a3a1a; color: #aed581; }
+        .badge.snr-weak  { background: #3a2a1a; color: #ffb74d; }
+
+        .contact-image {
+            border-top: 1px solid #1e3a5f;
+            padding: 0.8rem 1.2rem;
+        }
+
+        .contact-image img {
+            max-width: 100%;
+            border-radius: 3px;
+            display: block;
+        }
+
+        .contact-image .img-label {
+            color: #37474f;
+            font-size: 0.68rem;
+            margin-top: 0.4rem;
+        }
+
+        .no-image {
+            border-top: 1px solid #1e3a5f;
+            padding: 0.6rem 1.2rem;
+            color: #263238;
+            font-size: 0.72rem;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Mini Ground Station</h1>
+        <nav>
+            <a href="/passes">Přelety</a>
+            &nbsp;·&nbsp;
+            <a href="/map">Mapa</a>
+            &nbsp;·&nbsp;
+            <a href="/dashboard" class="active">Dashboard</a>
+        </nav>
+    </header>
+
+    {% if contacts %}
+        <div class="contact-list">
+            {% for c in contacts %}
+            {% set snr_class = "snr-good" if c.snr and c.snr >= 15 else ("snr-ok" if c.snr and c.snr >= 8 else "snr-weak") %}
+            <div class="contact-card">
+                <div class="contact-header">
+                    <div>
+                        <div class="sat-name">{{ c.satellite }}</div>
+                        <div class="contact-meta">
+                            {{ c.aos.astimezone(tz).strftime('%Y-%m-%d') }}
+                            &nbsp;
+                            {{ c.aos.astimezone(tz).strftime('%H:%M') }} – {{ c.los.astimezone(tz).strftime('%H:%M') }}
+                            {{ c.aos.astimezone(tz).strftime('%Z') }}
+                            <br>
+                            Délka <span>{{ c.duration_s // 60 }}:{{ "%02d" % (c.duration_s % 60) }} min</span>
+                            &nbsp;·&nbsp;
+                            Max el <span>{{ c.max_elevation }}°</span>
+                        </div>
+                    </div>
+                    <div class="badges">
+                        {% if c.snr %}
+                        <span class="badge {{ snr_class }}">SNR {{ c.snr }} dB</span>
+                        {% endif %}
+                        <span class="badge">{{ c.satellite.split()[1] if ' ' in c.satellite else c.satellite }}</span>
+                    </div>
+                </div>
+
+                {% if c.image_filename %}
+                <div class="contact-image">
+                    <img src="/static/images/{{ c.image_filename }}" alt="APT snímek {{ c.satellite }}">
+                    <div class="img-label">NOAA APT — dekódováno z WAV záznamu</div>
+                </div>
+                {% else %}
+                <div class="no-image">snímek nedostupný</div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <p class="empty">Zatím žádné záznamy. Agent pošle data po prvním přeletu.</p>
+    {% endif %}
+</body>
+</html>

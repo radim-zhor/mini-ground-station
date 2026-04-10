@@ -1,0 +1,14 @@
+# web app
+fastapi
+uvicorn[standard]
+skyfield
+jinja2
+python-dotenv
+requests
+sqlalchemy
+python-multipart
+
+# agent (requires librtlsdr: brew install librtlsdr)
+pyrtlsdr
+numpy
+scipy

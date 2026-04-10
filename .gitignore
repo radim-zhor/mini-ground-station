@@ -1,0 +1,11 @@
+.venv/
+.cache/
+.env
+__pycache__/
+*.pyc
+.DS_Store
+ground_station.db
+recordings/
+noaa-apt/
+*.png
+*.wav

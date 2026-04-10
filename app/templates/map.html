@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini Ground Station — Mapa</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0e1a;
+            color: #c8d8e8;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            padding: 0.8rem 1.5rem;
+            background: #0a0e1a;
+            border-bottom: 1px solid #1e3a5f;
+            display: flex;
+            align-items: baseline;
+            gap: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        header h1 {
+            color: #4fc3f7;
+            font-size: 1rem;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+
+        nav a {
+            color: #546e7a;
+            text-decoration: none;
+            font-size: 0.8rem;
+            letter-spacing: 1px;
+        }
+
+        nav a:hover { color: #4fc3f7; }
+        nav a.active { color: #4fc3f7; }
+
+        .layout {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        #map {
+            flex: 1;
+        }
+
+        .sidebar {
+            width: 280px;
+            flex-shrink: 0;
+            background: #0a0e1a;
+            border-left: 1px solid #1e3a5f;
+            overflow-y: auto;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .sidebar-section {
+            border: 1px solid #1e3a5f;
+            border-radius: 4px;
+            padding: 0.8rem;
+        }
+
+        .sidebar-section h2 {
+            color: #4fc3f7;
+            font-size: 0.7rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 0.7rem;
+        }
+
+        .sat-entry {
+            margin-bottom: 0.8rem;
+        }
+
+        .sat-entry:last-child { margin-bottom: 0; }
+
+        .sat-name {
+            color: #4fc3f7;
+            font-size: 0.85rem;
+            font-weight: bold;
+            margin-bottom: 0.25rem;
+        }
+
+        .sat-row {
+            color: #546e7a;
+            font-size: 0.72rem;
+            line-height: 1.6;
+        }
+
+        .sat-row span {
+            color: #c8d8e8;
+        }
+
+        .pass-block {
+            margin-top: 0.4rem;
+            padding: 0.4rem 0.5rem;
+            background: #0f1624;
+            border-radius: 3px;
+            font-size: 0.72rem;
+        }
+
+        .pass-countdown {
+            font-size: 0.85rem;
+            font-weight: bold;
+            margin-bottom: 0.2rem;
+        }
+
+        .pass-countdown.soon  { color: #ffb74d; }
+        .pass-countdown.later { color: #4caf50; }
+        .pass-countdown.now   { color: #ef5350; }
+
+        .pass-detail { color: #546e7a; line-height: 1.7; }
+        .pass-detail span { color: #c8d8e8; }
+
+        .status-bar {
+            font-size: 0.68rem;
+            color: #263238;
+            text-align: right;
+        }
+
+        .dot {
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #4caf50;
+            margin-right: 4px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%   { opacity: 1; }
+            50%  { opacity: 0.3; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Mini Ground Station</h1>
+        <nav>
+            <a href="/passes">Přelety</a>
+            &nbsp;·&nbsp;
+            <a href="/map" class="active">Mapa</a>
+            &nbsp;·&nbsp;
+            <a href="/dashboard">Dashboard</a>
+        </nav>
+    </header>
+
+    <div class="layout">
+        <div id="map"></div>
+
+        <aside class="sidebar">
+            <div class="sidebar-section">
+                <h2>Satelity</h2>
+                <div id="sat-list"><p style="color:#37474f;font-size:0.75rem">Načítání…</p></div>
+            </div>
+            <div class="sidebar-section" style="font-size:0.68rem;color:#37474f;line-height:1.8;">
+                <h2>Zkratky</h2>
+                <b style="color:#546e7a">AOS</b> — Acquisition of Signal<br>
+                <b style="color:#546e7a">LOS</b> — Loss of Signal<br>
+                <b style="color:#546e7a">El</b> — elevace (úhel nad obzorem)<br>
+                <b style="color:#546e7a">Alt</b> — výška satelitu nad zemí
+            </div>
+            <div class="status-bar">
+                <span class="dot"></span>
+                <span id="last-update">—</span>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+    const OBSERVER_LAT = {{ observer_lat }};
+    const OBSERVER_LON = {{ observer_lon }};
+
+    // ── Map init ────────────────────────────────────────────────────────────────
+    const map = L.map('map', { zoomControl: true }).setView([20, 0], 2);
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap &copy; CARTO',
+        subdomains: 'abcd',
+        maxZoom: 19,
+    }).addTo(map);
+
+    // Observer marker
+    const observerIcon = L.divIcon({
+        html: '<div style="width:10px;height:10px;border-radius:50%;background:#4fc3f7;border:2px solid #0a0e1a;"></div>',
+        iconSize: [10, 10], iconAnchor: [5, 5], className: '',
+    });
+    L.marker([OBSERVER_LAT, OBSERVER_LON], { icon: observerIcon })
+        .addTo(map)
+        .bindTooltip('Observer', { permanent: false, direction: 'top' });
+
+    // ── Satellite layer management ──────────────────────────────────────────────
+    const SAT_COLORS = ['#4fc3f7', '#81c784', '#ffb74d', '#f06292'];
+    const layers = {};   // name → { marker, footprint, track }
+
+    function satIcon(color) {
+        return L.divIcon({
+            html: `<div style="width:12px;height:12px;border-radius:50%;background:${color};border:2px solid #0a0e1a;box-shadow:0 0 6px ${color};"></div>`,
+            iconSize: [12, 12], iconAnchor: [6, 6], className: '',
+        });
+    }
+
+    function updateMap(data) {
+        const seen = new Set();
+
+        data.satellites.forEach((sat, i) => {
+            const color = SAT_COLORS[i % SAT_COLORS.length];
+            seen.add(sat.name);
+
+            if (!layers[sat.name]) {
+                layers[sat.name] = {
+                    marker: L.marker([sat.lat, sat.lon], { icon: satIcon(color) })
+                        .addTo(map)
+                        .bindTooltip(sat.name, { permanent: true, direction: 'right',
+                            className: '', offset: [8, 0],
+                            opacity: 0.9 }),
+                    footprint: L.circle([sat.lat, sat.lon], {
+                        radius: sat.footprint_radius_km * 1000,
+                        color: color, weight: 1, opacity: 0.4,
+                        fillColor: color, fillOpacity: 0.04,
+                    }).addTo(map),
+                    track: L.polyline([], {
+                        color: color, weight: 1.5, opacity: 0.6, dashArray: '4 4',
+                    }).addTo(map),
+                };
+            } else {
+                layers[sat.name].marker.setLatLng([sat.lat, sat.lon]);
+                layers[sat.name].footprint.setLatLng([sat.lat, sat.lon]);
+                layers[sat.name].footprint.setRadius(sat.footprint_radius_km * 1000);
+            }
+
+            // Ground track — wrap antimeridian
+            const track = wrapTrack(sat.ground_track);
+            layers[sat.name].track.setLatLngs(track);
+        });
+
+        // Remove stale layers
+        Object.keys(layers).forEach(name => {
+            if (!seen.has(name)) {
+                map.removeLayer(layers[name].marker);
+                map.removeLayer(layers[name].footprint);
+                map.removeLayer(layers[name].track);
+                delete layers[name];
+            }
+        });
+    }
+
+    // Split track at antimeridian jumps (>180° lon diff) to avoid wrap-around lines
+    function wrapTrack(points) {
+        if (points.length === 0) return [];
+        const segments = [[]];
+        for (let i = 0; i < points.length; i++) {
+            const cur = segments[segments.length - 1];
+            if (i > 0) {
+                const prev = points[i - 1];
+                if (Math.abs(points[i][1] - prev[1]) > 180) {
+                    segments.push([]);
+                }
+            }
+            segments[segments.length - 1].push(points[i]);
+        }
+        // Leaflet accepts nested arrays for MultiPolyline via setLatLngs
+        return segments.length === 1 ? segments[0] : segments;
+    }
+
+    // ── Sidebar rendering ───────────────────────────────────────────────────────
+    function countdownClass(min) {
+        if (min <= 0)  return 'now';
+        if (min < 30)  return 'soon';
+        return 'later';
+    }
+
+    function countdownText(min) {
+        if (min <= 0) return 'probíhá';
+        if (min < 60) return `za ${min} min`;
+        return `za ${Math.floor(min/60)}h ${String(min%60).padStart(2,'0')}min`;
+    }
+
+    function renderSidebar(data) {
+        const el = document.getElementById('sat-list');
+        el.innerHTML = data.satellites.map(sat => {
+            const np = sat.next_pass;
+            let passHtml = '';
+            if (np) {
+                const cls = countdownClass(np.minutes_until);
+                passHtml = `
+                    <div class="pass-block">
+                        <div class="pass-countdown ${cls}">${countdownText(np.minutes_until)}</div>
+                        <div class="pass-detail">
+                            AOS <span>${np.aos}</span><br>
+                            LOS <span>${np.los}</span><br>
+                            El  <span>${np.max_elevation}°</span>
+                        </div>
+                    </div>`;
+            }
+            return `
+                <div class="sat-entry">
+                    <div class="sat-name">${sat.name}</div>
+                    <div class="sat-row">Lat <span>${sat.lat.toFixed(2)}°</span>  Lon <span>${sat.lon.toFixed(2)}°</span></div>
+                    <div class="sat-row">Alt <span>${sat.alt_km} km</span></div>
+                    ${passHtml}
+                </div>`;
+        }).join('');
+    }
+
+    // ── Polling ─────────────────────────────────────────────────────────────────
+    async function refresh() {
+        try {
+            const resp = await fetch('/satellite/position');
+            if (!resp.ok) return;
+            const data = await resp.json();
+            updateMap(data);
+            renderSidebar(data);
+            document.getElementById('last-update').textContent =
+                'aktualizováno ' + new Date().toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        } catch (e) {
+            console.warn('position fetch failed', e);
+        }
+    }
+
+    refresh();
+    setInterval(refresh, 5000);
+    </script>
+</body>
+</html>
