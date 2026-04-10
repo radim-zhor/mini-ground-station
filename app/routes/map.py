@@ -22,8 +22,7 @@ _TZ = ZoneInfo("Europe/Prague")
 async def map_page(request: Request):
     observer_lat = float(os.getenv("OBSERVER_LAT", "50.08"))
     observer_lon = float(os.getenv("OBSERVER_LON", "14.44"))
-    return templates.TemplateResponse("map.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "map.html", {
         "observer_lat": observer_lat,
         "observer_lon": observer_lon,
     })

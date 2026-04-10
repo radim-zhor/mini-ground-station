@@ -21,8 +21,7 @@ _TZ = ZoneInfo("Europe/Prague")
 @router.get("/passes", response_class=HTMLResponse)
 async def passes_page(request: Request):
     passes = predict_passes(hours=24)
-    return templates.TemplateResponse("passes.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "passes.html", {
         "passes": passes,
         "now": datetime.now(_TZ),
         "tz": _TZ,

@@ -66,8 +66,7 @@ async def create_contact(
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, db: Session = Depends(get_db)):
     contacts = db.query(Contact).order_by(Contact.aos.desc()).limit(50).all()
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dashboard.html", {
         "contacts": contacts,
         "tz": _TZ,
     })
