@@ -157,17 +157,13 @@ def current_positions() -> list[SatPosition]:
 
         next_pass = next_pass_map.get(satellite.name)
 
-        # Ground track: positions every 30s between AOS and LOS
+        # Ground track: full orbital path for the next 90 minutes, every 60s
         ground_track: list[tuple[float, float]] = []
-        if next_pass:
-            t_aos = ts.from_datetime(next_pass.aos)
-            t_los = ts.from_datetime(next_pass.los)
-            steps = max(10, next_pass.duration_s // 30)
-            for i in range(steps + 1):
-                frac = i / steps
-                t_step = ts.tt_jd(t_aos.tt + frac * (t_los.tt - t_aos.tt))
-                sp = wgs84.subpoint_of(satellite.at(t_step))
-                ground_track.append((round(sp.latitude.degrees, 4), round(sp.longitude.degrees, 4)))
+        steps = 90
+        for i in range(steps + 1):
+            t_step = ts.tt_jd(now.tt + i / (24 * 60))
+            sp = wgs84.subpoint_of(satellite.at(t_step))
+            ground_track.append((round(sp.latitude.degrees, 4), round(sp.longitude.degrees, 4)))
 
         result.append(SatPosition(
             name=satellite.name,
