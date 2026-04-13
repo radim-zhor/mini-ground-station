@@ -167,6 +167,16 @@
         <abbr><b>El</b> — elevace (úhel nad obzorem)</abbr>
         <abbr><b>Az</b> — azimut při max. elevaci (sever = 0°)</abbr>
     </div>
-    <p class="footer">Generováno {{ now.strftime('%Y-%m-%d %H:%M %Z') }}</p>
+    <p class="footer">Generováno {{ now.strftime('%Y-%m-%d %H:%M %Z') }} · aktualizace za <span id="countdown">60</span>s</p>
+
+    <script>
+    let secs = 60;
+    const el = document.getElementById('countdown');
+    setInterval(() => {
+        secs--;
+        el.textContent = secs;
+        if (secs <= 0) location.reload();
+    }, 1000);
+    </script>
 </body>
 </html>
