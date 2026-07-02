@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt', 'requirements-dev.txt') }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # pyrtlsdr needs the librtlsdr C library (hardware only) — skip it in CI.
+          grep -v '^pyrtlsdr' requirements.txt > requirements-ci.txt
+          pip install -r requirements-ci.txt
+          pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check . --exclude noaa-apt
+
+      - name: Test (pytest)
+        env:
+          MOCK: "1"
+        run: pytest

@@ -1,0 +1,4 @@
+# Dev / CI only — not needed at runtime
+pytest
+httpx
+ruff

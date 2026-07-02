@@ -1,0 +1,74 @@
+"""Tests for shared.tle — TLE parsing, pass prediction, geometry."""
+import math
+
+from shared import tle
+
+
+def test_load_noaa_satellites_parses_three():
+    sats = tle.load_noaa_satellites()
+    names = {s.name for s in sats}
+    assert names == {"NOAA 15", "NOAA 18", "NOAA 19"}
+
+
+def test_load_noaa_satellites_strips_leading_zero():
+    # tle0 in the SatNOGS feed is prefixed with "0 " — must not leak into name.
+    sats = tle.load_noaa_satellites()
+    assert all(not s.name.startswith("0") for s in sats)
+
+
+def test_footprint_radius_monotonic_and_bounded():
+    # Higher orbit → larger footprint; radius stays below a quarter Earth circumference.
+    low = tle._footprint_radius_km(500)
+    high = tle._footprint_radius_km(900)
+    assert 0 < low < high < 5000
+
+
+def test_footprint_radius_formula():
+    # Spot-check against the closed form for a 850 km orbit.
+    R = 6371.0
+    alt = 850.0
+    expected = round(R * math.acos(R / (R + alt)), 0)
+    assert tle._footprint_radius_km(alt) == expected
+
+
+def test_predict_passes_invariants():
+    passes = tle.predict_passes(hours=48)
+    # Over 48 h the three NOAA sats always produce at least one pass from mid-lat.
+    assert passes, "expected at least one pass in 48 h"
+    for p in passes:
+        assert p.satellite in {"NOAA 15", "NOAA 18", "NOAA 19"}
+        assert p.los > p.aos
+        assert p.duration_s > 0
+        assert -90 <= p.max_elevation <= 90
+        assert 0 <= p.az_at_max <= 360
+    # Result is sorted by AOS.
+    assert passes == sorted(passes, key=lambda p: p.aos)
+
+
+def test_get_cached_passes_reuses_result(monkeypatch):
+    calls = {"n": 0}
+    real = tle.predict_passes
+
+    def counting(*a, **k):
+        calls["n"] += 1
+        return real(*a, **k)
+
+    monkeypatch.setattr(tle, "predict_passes", counting)
+    tle.get_cached_passes()
+    tle.get_cached_passes()
+    assert calls["n"] == 1, "second call should hit the cache"
+
+
+def test_current_positions_shape():
+    positions = tle.current_positions()
+    assert len(positions) == 3
+    for pos in positions:
+        assert -90 <= pos.lat <= 90
+        assert -180 <= pos.lon <= 180
+        assert pos.alt_km > 0
+        assert pos.footprint_radius_km > 0
+        # Ground track is a 90-min path sampled every minute.
+        assert len(pos.ground_track) == 91
+        for lat, lon in pos.ground_track:
+            assert -90 <= lat <= 90
+            assert -180 <= lon <= 180

@@ -9,3 +9,6 @@ recordings/
 noaa-apt/
 *.png
 *.wav
+.pytest_cache/
+.ruff_cache/
+requirements-ci.txt
