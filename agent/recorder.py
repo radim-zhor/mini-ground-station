@@ -45,28 +45,66 @@ def record(frequency_hz: int, duration_s: int, satellite: str) -> Path:
 
 def measure_snr(wav_path: Path) -> float:
     """
-    Estimate SNR of an APT recording in dB.
+    Estimate SNR of an APT recording in dB over the whole file.
 
     Compares power in the APT tone band (2000–2800 Hz) against
     the noise floor above it (4000–8000 Hz).
     Returns 0.0 on failure.
     """
     try:
-        with wave.open(str(wav_path), "r") as wf:
-            frames = wf.readframes(wf.getnframes())
-            rate = wf.getframerate()
-        audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
-        f, psd = welch(audio, fs=rate, nperseg=2048)
-        sig_power = np.mean(psd[(f >= 2000) & (f <= 2800)])
-        noise_power = np.mean(psd[(f >= 4000) & (f <= 8000)])
-        if noise_power == 0:
-            return 0.0
-        return round(10 * np.log10(sig_power / noise_power), 1)
+        audio, rate = _read_wav(wav_path)
+        return _snr_of(audio, rate)
     except Exception:
         return 0.0
 
 
+def measure_snr_windows(wav_path: Path, window_s: int = 10) -> tuple[float, float]:
+    """
+    Estimate (avg, peak) SNR in dB across consecutive ``window_s`` windows.
+
+    Per-window SNR captures how reception quality varies across the pass
+    (low at horizon, peaks near TCA). Returns (0.0, 0.0) on failure or if
+    the file is shorter than one window.
+    """
+    try:
+        audio, rate = _read_wav(wav_path)
+        win = window_s * rate
+        snrs = [
+            _snr_of(audio[i:i + win], rate)
+            for i in range(0, len(audio) - win + 1, win)
+        ]
+        snrs = [s for s in snrs if s != 0.0]
+        if not snrs:
+            # Recording shorter than one window — fall back to the whole file.
+            whole = _snr_of(audio, rate)
+            return (whole, whole)
+        return (round(sum(snrs) / len(snrs), 1), round(max(snrs), 1))
+    except Exception:
+        return (0.0, 0.0)
+
+
 # ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _read_wav(wav_path: Path) -> tuple[np.ndarray, int]:
+    """Read a mono 16-bit WAV into a float32 array in [-1, 1] and its rate."""
+    with wave.open(str(wav_path), "r") as wf:
+        frames = wf.readframes(wf.getnframes())
+        rate = wf.getframerate()
+    audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+    return audio, rate
+
+
+def _snr_of(audio: np.ndarray, rate: int) -> float:
+    """SNR in dB: APT tone band (2000–2800 Hz) vs noise floor (4000–8000 Hz)."""
+    if len(audio) < 2048:
+        return 0.0
+    f, psd = welch(audio, fs=rate, nperseg=2048)
+    sig_power = np.mean(psd[(f >= 2000) & (f <= 2800)])
+    noise_power = np.mean(psd[(f >= 4000) & (f <= 8000)])
+    if noise_power == 0:
+        return 0.0
+    return round(10 * np.log10(sig_power / noise_power), 1)
+
 
 def _rtlsdr_record(frequency_hz: int, duration_s: int, out_path: Path) -> Path:
     from rtlsdr import RtlSdr  # imported lazily — not needed in mock/web-app
@@ -74,7 +112,10 @@ def _rtlsdr_record(frequency_hz: int, duration_s: int, out_path: Path) -> Path:
     sdr = RtlSdr()
     sdr.sample_rate = SAMPLE_RATE_SDR
     sdr.center_freq = frequency_hz
-    sdr.gain = 49.6
+    # Tunable without a code change (A7). "auto" enables AGC; a number sets
+    # a fixed tuner gain in dB (49.6 = max on the RTL-SDR V3).
+    gain_env = os.getenv("SDR_GAIN", "49.6")
+    sdr.gain = "auto" if gain_env.lower() == "auto" else float(gain_env)
 
     total_samples = SAMPLE_RATE_SDR * duration_s
     chunk_size = SAMPLE_RATE_SDR  # process 1 second at a time

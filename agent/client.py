@@ -27,6 +27,8 @@ def post_contact(
     duration_s: int,
     max_elevation: float,
     snr: float,
+    avg_snr: Optional[float] = None,
+    notes: Optional[str] = None,
     png_path: Optional[Path] = None,
 ) -> bool:
     """
@@ -42,6 +44,10 @@ def post_contact(
         "max_elevation": str(max_elevation),
         "snr": str(snr),
     }
+    if avg_snr is not None:
+        data["avg_snr"] = str(avg_snr)
+    if notes:
+        data["notes"] = notes
     files = {}
     if png_path and png_path.exists():
         files["image"] = open(png_path, "rb")
@@ -59,7 +65,7 @@ def post_contact(
         return True
     except Exception as e:
         log.warning("POST /contacts failed (%s) — saving to pending queue", e)
-        _save_pending(satellite, aos, los, duration_s, max_elevation, snr, png_path)
+        _save_pending(satellite, aos, los, duration_s, max_elevation, snr, avg_snr, notes, png_path)
         return False
     finally:
         for f in files.values():
@@ -72,14 +78,17 @@ def retry_pending() -> None:
         return
 
     conn = _open_pending_db()
-    rows = conn.execute("SELECT id, satellite, aos, los, duration_s, max_elevation, snr, png_path FROM pending").fetchall()
+    rows = conn.execute(
+        "SELECT id, satellite, aos, los, duration_s, max_elevation, snr, avg_snr, notes, png_path "
+        "FROM pending"
+    ).fetchall()
     if not rows:
         conn.close()
         return
 
     log.info("Retrying %d pending contact(s)...", len(rows))
     for row in rows:
-        id_, satellite, aos, los, duration_s, max_elevation, snr, png_path = row
+        id_, satellite, aos, los, duration_s, max_elevation, snr, avg_snr, notes, png_path = row
         ok = post_contact(
             satellite,
             datetime.fromisoformat(aos),
@@ -87,6 +96,8 @@ def retry_pending() -> None:
             duration_s,
             max_elevation,
             snr,
+            avg_snr,
+            notes,
             Path(png_path) if png_path else None,
         )
         if ok:
@@ -96,12 +107,13 @@ def retry_pending() -> None:
 
 
 def _save_pending(
-    satellite, aos, los, duration_s, max_elevation, snr, png_path
+    satellite, aos, los, duration_s, max_elevation, snr, avg_snr, notes, png_path
 ) -> None:
     conn = _open_pending_db()
     conn.execute("""
-        INSERT INTO pending (satellite, aos, los, duration_s, max_elevation, snr, png_path, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO pending
+            (satellite, aos, los, duration_s, max_elevation, snr, avg_snr, notes, png_path, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         satellite,
         aos.isoformat(),
@@ -109,6 +121,8 @@ def _save_pending(
         duration_s,
         max_elevation,
         snr,
+        avg_snr,
+        notes,
         str(png_path) if png_path else None,
         datetime.now(timezone.utc).isoformat(),
     ))
@@ -127,6 +141,8 @@ def _open_pending_db() -> sqlite3.Connection:
             duration_s  INTEGER NOT NULL,
             max_elevation REAL NOT NULL,
             snr         REAL,
+            avg_snr     REAL,
+            notes       TEXT,
             png_path    TEXT,
             created_at  TEXT NOT NULL
         )

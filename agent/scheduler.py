@@ -13,10 +13,12 @@ import os
 import time
 from datetime import datetime, timezone
 
+import requests
+
 from agent.client import post_contact, retry_pending
 from agent.decoder import decode_apt
-from agent.recorder import measure_snr, record
-from shared.tle import predict_passes
+from agent.recorder import measure_snr_windows, record
+from shared.tle import get_cached_passes
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,18 +36,50 @@ FREQUENCIES: dict[str, int] = {
 
 POLL_INTERVAL = 30   # seconds between pass-list refreshes
 PRE_AOS_WAKE = 10    # seconds before AOS to stop sleeping and start recording
+NOTIFY_LEAD_S = 600  # send an ntfy alert ~10 min before AOS
+
+
+def notify_upcoming(p) -> None:
+    """Push a 'pass incoming' alert to ntfy.sh, if NTFY_TOPIC is configured."""
+    topic = os.getenv("NTFY_TOPIC")
+    if not topic:
+        return
+    mins = max(int((p.aos - datetime.now(timezone.utc)).total_seconds() / 60), 0)
+    msg = f"{p.satellite} in {mins} min — max el {p.max_elevation:.0f}°, {p.duration_s // 60} min pass"
+    try:
+        requests.post(
+            f"https://ntfy.sh/{topic}",
+            data=msg.encode("utf-8"),
+            headers={"Title": "Satellite pass incoming", "Tags": "satellite"},
+            timeout=10,
+        )
+        log.info("ntfy: %s", msg)
+    except Exception as e:
+        log.warning("ntfy failed: %s", e)
 
 
 def _next_upcoming_pass():
-    """Return the soonest future pass, or None if nothing in 24 h."""
-    passes = predict_passes(hours=24)
-    upcoming = [p for p in passes if p.minutes_until > 0]
+    """Return the soonest pass that hasn't ended yet, or None if none in 24 h.
+
+    Uses ``los > now`` rather than ``minutes_until > 0`` (A2): the latter drops
+    the pass in its final minute before AOS (``int(59s / 60) == 0``) and also
+    ignores a pass already in progress, which we can still partially record.
+    Predictions come from the shared 5-minute cache instead of a fresh skyfield
+    run on every 30 s poll.
+    """
+    now = datetime.now(timezone.utc)
+    upcoming = sorted(
+        (p for p in get_cached_passes() if p.los > now),
+        key=lambda p: p.aos,
+    )
     return upcoming[0] if upcoming else None
 
 
 def run() -> None:
     log.info("Scheduler started  MOCK=%s", os.getenv("MOCK", "0"))
     retry_pending()
+
+    notified: set[str] = set()  # pass keys already announced via ntfy
 
     while True:
         nxt = _next_upcoming_pass()
@@ -64,6 +98,12 @@ def run() -> None:
             max(wait_s // 60, 0),
         )
 
+        # Alert ~10 min ahead, once per pass.
+        key = f"{nxt.satellite}@{nxt.aos.isoformat()}"
+        if 0 < wait_s <= NOTIFY_LEAD_S and key not in notified:
+            notify_upcoming(nxt)
+            notified.add(key)
+
         if wait_s > POLL_INTERVAL + PRE_AOS_WAKE:
             # Too early — sleep a bit and re-check
             time.sleep(POLL_INTERVAL)
@@ -80,11 +120,20 @@ def run() -> None:
             continue
 
         # ── Record ────────────────────────────────────────────────────────────
-        log.info("AOS  %s  %.4f MHz  duration %d s", nxt.satellite, freq / 1e6, nxt.duration_s)
+        # Record until LOS, not for a fixed length (A1). If the loop woke late
+        # (slow prediction, pending retry) recording a fixed duration_s from
+        # *now* would run past LOS into noise; anchor the end to LOS instead.
+        record_s = int((nxt.los - datetime.now(timezone.utc)).total_seconds())
+        if record_s <= 0:
+            log.warning("%s LOS already passed — skipping", nxt.satellite)
+            time.sleep(60)
+            continue
+
+        log.info("AOS  %s  %.4f MHz  recording %d s to LOS", nxt.satellite, freq / 1e6, record_s)
         try:
             wav_path = record(
                 frequency_hz=freq,
-                duration_s=nxt.duration_s,
+                duration_s=record_s,
                 satellite=nxt.satellite,
             )
         except Exception:
@@ -92,18 +141,21 @@ def run() -> None:
             time.sleep(120)
             continue
 
-        snr = measure_snr(wav_path)
-        log.info("LOS  saved %s  SNR %.1f dB", wav_path.name, snr)
+        avg_snr, peak_snr = measure_snr_windows(wav_path)
+        log.info("LOS  saved %s  SNR avg %.1f / peak %.1f dB", wav_path.name, avg_snr, peak_snr)
 
         # ── Decode ────────────────────────────────────────────────────────────
         png_path = None
+        notes = None
         log.info("Decoding APT...")
         try:
             png_path = decode_apt(wav_path)
             log.info("Image saved: %s", png_path.name)
-        except FileNotFoundError as e:
-            log.warning("%s — skipping decode", e)
-        except Exception:
+        except FileNotFoundError:
+            notes = "decode skipped: noaa-apt binary not found"
+            log.warning("%s", notes)
+        except Exception as e:
+            notes = f"decode failed: {e}"
             log.exception("Decode failed")
 
         post_contact(
@@ -112,7 +164,9 @@ def run() -> None:
             los=nxt.los,
             duration_s=nxt.duration_s,
             max_elevation=nxt.max_elevation,
-            snr=snr,
+            snr=peak_snr,
+            avg_snr=avg_snr,
+            notes=notes,
             png_path=png_path,
         )
 

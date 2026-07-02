@@ -1,13 +1,13 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import jinja2
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
-import jinja2
 from fastapi.templating import Jinja2Templates
 
-from shared.tle import predict_passes
+from shared.tle import get_cached_passes
 
 router = APIRouter()
 _tmpl_dir = str(Path(__file__).parent.parent / "templates")
@@ -20,7 +20,7 @@ _TZ = ZoneInfo("Europe/Prague")
 
 @router.get("/passes", response_class=HTMLResponse)
 async def passes_page(request: Request):
-    passes = predict_passes(hours=24)
+    passes = get_cached_passes()
     return templates.TemplateResponse(request, "passes.html", {
         "passes": passes,
         "now": datetime.now(_TZ),

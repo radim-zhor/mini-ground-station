@@ -2,9 +2,9 @@ import os
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import jinja2
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
-import jinja2
 from fastapi.templating import Jinja2Templates
 
 from shared.tle import current_positions

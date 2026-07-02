@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import requests
 from skyfield.api import EarthSatellite, load, wgs84
 
@@ -129,22 +130,29 @@ def predict_passes(hours: int = 24) -> list[PassInfo]:
 
 
 def get_cached_passes() -> list[PassInfo]:
+    """Return predicted passes, recomputing at most every PASSES_CACHE_TTL (A2).
+
+    The absolute AOS/LOS times stay valid between recomputes; only the
+    ``minutes_until`` countdown is refreshed on every call so callers
+    (the /passes page and the live map) always show an accurate ETA.
+    """
     if time.time() - _passes_cache["updated"] > PASSES_CACHE_TTL:
         _passes_cache["data"] = predict_passes()
         _passes_cache["updated"] = time.time()
-    return _passes_cache["data"] or []
+
+    passes = _passes_cache["data"] or []
+    now_dt = datetime.now(timezone.utc)
+    for p in passes:
+        p.minutes_until = int((p.aos - now_dt).total_seconds() / 60)
+    return passes
 
 
 def current_positions() -> list[SatPosition]:
     satellites = load_noaa_satellites()
     now = ts.now()
 
-    # Next pass per satellite (from cache)
+    # Next pass per satellite (from cache; minutes_until refreshed inside).
     passes = get_cached_passes()
-    now_dt = datetime.now(timezone.utc)
-    # Refresh minutes_until so it's current
-    for p in passes:
-        p.minutes_until = int((p.aos - now_dt).total_seconds() / 60)
     next_pass_map: dict[str, PassInfo] = {}
     for p in passes:
         if p.minutes_until > -(p.duration_s / 60) and p.satellite not in next_pass_map:
@@ -160,13 +168,16 @@ def current_positions() -> list[SatPosition]:
 
         next_pass = next_pass_map.get(satellite.name)
 
-        # Ground track: full orbital path for the next 90 minutes, every 60s
-        ground_track: list[tuple[float, float]] = []
+        # Ground track: full orbital path for the next 90 minutes, sampled every
+        # 60s. Vectorised into a single skyfield evaluation (A3) — the old
+        # per-minute loop ran 91 propagations per satellite on every 5s poll.
         steps = 90
-        for i in range(steps + 1):
-            t_step = ts.tt_jd(now.tt + i / (24 * 60))
-            sp = wgs84.subpoint_of(satellite.at(t_step))
-            ground_track.append((round(sp.latitude.degrees, 4), round(sp.longitude.degrees, 4)))
+        minutes = np.arange(steps + 1)
+        t_track = ts.tt_jd(now.tt + minutes / (24 * 60))
+        track_sp = wgs84.subpoint_of(satellite.at(t_track))
+        track_lats = np.round(track_sp.latitude.degrees, 4).tolist()
+        track_lons = np.round(track_sp.longitude.degrees, 4).tolist()
+        ground_track: list[tuple[float, float]] = list(zip(track_lats, track_lons))
 
         result.append(SatPosition(
             name=satellite.name,

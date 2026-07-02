@@ -3,10 +3,11 @@ Minimal NOAA APT decoder.
 Usage: python decode_apt.py <input.wav> <output.png>
 """
 import sys
+
 import numpy as np
-from scipy.signal import hilbert, resample_poly
-from scipy.io import wavfile
 from PIL import Image
+from scipy.io import wavfile
+from scipy.signal import hilbert, resample_poly
 
 NOAA_APT_LINE_RATE = 2        # lines/sec
 NOAA_APT_PIXELS_PER_LINE = 2080
