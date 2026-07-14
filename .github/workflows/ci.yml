@@ -36,3 +36,8 @@ jobs:
         env:
           MOCK: "1"
         run: pytest
+
+      - name: Migrations run cleanly
+        env:
+          DATABASE_URL: "sqlite:///ci_migrations.db"
+        run: alembic upgrade head && alembic downgrade base

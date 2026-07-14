@@ -4,7 +4,7 @@
 __pycache__/
 *.pyc
 .DS_Store
-ground_station.db
+*.db
 recordings/
 noaa-apt/
 *.png

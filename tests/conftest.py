@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 
 # ── Must run before app modules are imported ────────────────────────────────
-_TMP_DB = Path(tempfile.gettempdir()) / "ground_station_test.db"
+# Per-process filename so two concurrent pytest runs don't share one SQLite file.
+_TMP_DB = Path(tempfile.gettempdir()) / f"ground_station_test_{os.getpid()}.db"
 if _TMP_DB.exists():
     _TMP_DB.unlink()
 os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DB}"

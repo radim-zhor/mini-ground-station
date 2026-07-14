@@ -77,10 +77,8 @@ duplicit, web nešahá na skyfield při každém requestu. **20 passed**, ruff c
 - `get_cached_passes()` teď obnovuje `minutes_until` při každém volání, takže
   cache neovlivní odpočet na `/passes` ani na mapě.
 - Idempotence má dvě vrstvy: app-level lookup (rychlá cesta) + DB constraint
-  s odchycením `IntegrityError` (race / tz round-trip). Constraint platí pro
-  **nově vytvořené** tabulky; existující DB na Renderu drží jen app-level guard
-  (migrace tabulky není automatická — kdyby vadily staré duplicity, dořešit
-  ručně nebo přes Alembic).
+  s odchycením `IntegrityError` (race / tz round-trip). Constraint na existující
+  Render DB doplní **migrace M** (Alembic) — viz níže.
 - Off-by-one ve scheduleru byl latentní i před cache — stál za samostatnou
   opravu (filtr `los > now` místo `minutes_until > 0`).
 
@@ -106,12 +104,30 @@ duplicit, web nešahá na skyfield při každém requestu. **20 passed**, ruff c
 **Poznámky k realizaci:**
 - Retry fronta (`pending.db`) rozšířena o `avg_snr` + `notes`, aby se při
   výpadku sítě neztratily.
-- Stejný **migrační dluh** jako A4: nové sloupce `avg_snr`/`quality`/`notes`
-  se na existující Render PostgreSQL nepřidají automaticky (`create_all`
-  neupravuje existující tabulky) — dořešit společně s A4 (Alembic /
-  `ALTER TABLE ADD COLUMN`, sloupce jsou nullable, takže bezpečné).
+- Nové sloupce `avg_snr`/`quality`/`notes` + constraint doplní na produkci
+  **migrace M** (Alembic) — viz níže.
 - Test-DB izolace: `conftest` teď dropne+recreatne tabulky před každým testem
   (kontakty se jinak hromadily a rozbíjely count/CSV asserty).
+
+## Iterace M — Migrace (Alembic) ✅ HOTOVO 2026-07-02
+*Cíl: dostat schema změny z F/5 bezpečně na živou Render DB. ~1 večer.*
+
+1. [x] Alembic scaffolding, `env.py` napojený na `shared.models.Base` a
+   `DATABASE_URL` (ošetřen Render `postgres://` → `postgresql://`).
+2. [x] `0001_baseline` — schema jaké je teď na Renderu; přeskočí CREATE,
+   když `contacts` už existuje (bezpečné bez ručního `stamp`).
+3. [x] `0002_add_ops_columns` — přidá sloupce (guardované), odmaže duplicitní
+   přelety, přidá `uq_contact_pass`. Idempotentní.
+4. [x] CI smoke-test: `alembic upgrade head && alembic downgrade base`.
+5. [ ] **Na Renderu**: nastavit Pre-Deploy Command `alembic upgrade head`
+   (nebo prependnout do Start Command). Pak teprve mergovat do `main`.
+
+**Ověřeno lokálně** proti SQLite kopii starého schématu: 3 řádky (s duplicitou)
+→ upgrade → sloupce doplněny, duplicita odmazána (3→2), constraint přidán;
+idempotence, čerstvá DB i downgrade OK. Detaily v `alembic/README`.
+
+**Zbývá jediný manuální krok (bod 5):** nastavit na Renderu, ať migrace běží
+při deployi — pak je merge do `main` bezpečný.
 
 ## Iterace 4b — FUNCUBE-1 / AO-73 telemetrie (z PLAN.md)
 *Cíl: skutečná CubeSat telemetrie. ~3+ večery, nejtěžší část.*
