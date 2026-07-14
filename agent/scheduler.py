@@ -4,10 +4,16 @@ scheduler.py — satellite pass scheduler
 Continuously watches for upcoming NOAA passes, triggers the recorder
 at AOS, and decodes the recording after LOS.
 
-Usage:
-    python agent/scheduler.py          # real RTL-SDR hardware
-    MOCK=1 python agent/scheduler.py   # synthetic data, no hardware
+Usage (run as a module from the repo root — agent/ uses absolute imports):
+    python -m agent.scheduler          # real RTL-SDR hardware
+    MOCK=1 python -m agent.scheduler   # synthetic data, no hardware
 """
+# Load .env before importing agent.client, which reads APP_URL / AGENT_SECRET
+# at import time.
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import logging
 import os
 import time

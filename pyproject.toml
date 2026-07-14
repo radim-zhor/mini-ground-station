@@ -17,5 +17,6 @@ select = ["E", "F", "I", "W", "UP"]
 ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["E402"]     # env must be set before app imports
-"app/main.py" = ["E402"] # load_dotenv() must run before app modules read env
+"tests/*" = ["E402"]           # env must be set before app imports
+"app/main.py" = ["E402"]       # load_dotenv() must run before app modules read env
+"agent/scheduler.py" = ["E402"] # load_dotenv() must run before agent.client reads env

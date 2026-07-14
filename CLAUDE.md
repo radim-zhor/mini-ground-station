@@ -74,7 +74,8 @@ rtl_test          # verify dongle is detected
 uvicorn app.main:app --reload
 
 # Run agent locally (mock mode — no hardware required)
-MOCK=1 python agent/scheduler.py
+# Must run as a module from the repo root (agent/ uses absolute imports).
+MOCK=1 python -m agent.scheduler
 ```
 
 ## Docs
