@@ -136,6 +136,53 @@ def test_dashboard_filter_by_satellite(client, auth_headers):
     assert "11.1" not in resp.text
 
 
+def test_observer_report_requires_auth(client):
+    resp = client.post("/observer", data={"lat": "49.2", "lon": "16.8", "source": "ip"})
+    assert resp.status_code == 401
+
+
+def test_observer_report_rejects_bad_coords(client, auth_headers):
+    resp = client.post(
+        "/observer", data={"lat": "123.0", "lon": "16.8", "source": "ip"}, headers=auth_headers
+    )
+    assert resp.status_code == 422
+
+
+def test_observer_report_moves_station(client, auth_headers):
+    resp = client.post(
+        "/observer",
+        data={"lat": "48.1486", "lon": "17.1077", "source": "ip"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "changed": True}
+
+    pos = client.get("/satellite/position").json()
+    assert pos["observer"]["lat"] == 48.1486
+    assert pos["observer"]["lon"] == 17.1077
+    assert pos["observer"]["source"] == "ip"
+    assert pos["observer"]["updated"] is not None
+
+
+def test_observer_report_persists_across_restart(client, auth_headers):
+    client.post(
+        "/observer",
+        data={"lat": "50.7663", "lon": "15.0543", "source": "ip"},
+        headers=auth_headers,
+    )
+
+    # Simulate an app restart: clear runtime state, reload from DB.
+    import shared.tle as tle
+    from app.routes import map as map_routes
+
+    tle._observer_override = None
+    map_routes._observer_meta.update(source=None, updated_at=None)
+    map_routes.load_station_from_db()
+
+    assert tle.get_observer_latlon() == (50.7663, 15.0543)
+    assert map_routes._observer_meta["source"] == "ip"
+
+
 def test_dashboard_pagination(client, auth_headers):
     for i in range(12):
         _post(client, auth_headers, satellite="NOAA 19",

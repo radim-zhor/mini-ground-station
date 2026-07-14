@@ -47,6 +47,13 @@ ground-station/
 - **IQ storage:** record directly as 48 kHz WAV (~55 MB/pass). Raw IQ retention policy (48h) to be added in iteration 4b.
 - **Notifications:** ntfy.sh via `requests.post()`, no SMTP.
 - **Agent → app auth:** shared secret in `Authorization` header (env var on both sides).
+- **Mobile station:** the ground station moves. The agent auto-detects its position
+  (IP geolocation via ipinfo.io, `OBSERVER_MODE=auto` default) and reports it to
+  `POST /observer`; the app persists it in `station_status` (single row) and uses it
+  for the map pin and pass predictions. `OBSERVER_LAT/LON` are the fallback;
+  `OBSERVER_MODE=manual` pins them (e.g. when on VPN).
+- **DB migrations:** Alembic (`alembic upgrade head` runs in the Render Start Command
+  before uvicorn). Never rely on `create_all` for schema changes on production.
 
 ## Development setup
 
@@ -84,7 +91,9 @@ User-facing tutorials live in `docs/`:
 |---|---|---|
 | `DATABASE_URL` | app | PostgreSQL connection string |
 | `AGENT_SECRET` | agent + app | Shared secret for POST /contacts auth |
-| `OBSERVER_LAT` | agent | Observer latitude |
-| `OBSERVER_LON` | agent | Observer longitude |
+| `OBSERVER_MODE` | agent | `auto` (default) = IP geolocation; `manual` = pin to OBSERVER_LAT/LON |
+| `OBSERVER_LAT` | agent + app | Observer latitude (fallback when auto-detection fails) |
+| `OBSERVER_LON` | agent + app | Observer longitude (fallback when auto-detection fails) |
 | `MOCK` | agent | Set to `1` to use synthetic IQ data instead of RTL-SDR |
 | `NTFY_TOPIC` | agent | ntfy.sh topic for pass notifications |
+| `SDR_GAIN` | agent | Tuner gain in dB, or `auto` for AGC (default 49.6) |

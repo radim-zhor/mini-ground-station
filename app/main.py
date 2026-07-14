@@ -16,6 +16,10 @@ app = FastAPI(title="Mini Ground Station")
 # Create DB tables on startup
 init_db()
 
+# Restore the last reported (mobile) station position, so the map and pass
+# predictions survive an app restart without waiting for the agent.
+map.load_station_from_db()
+
 # Static files (APT images uploaded by agent)
 _static_dir = Path(__file__).parent / "static"
 _static_dir.mkdir(exist_ok=True)

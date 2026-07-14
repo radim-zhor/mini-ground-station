@@ -59,6 +59,27 @@ def test_get_cached_passes_reuses_result(monkeypatch):
     assert calls["n"] == 1, "second call should hit the cache"
 
 
+def test_set_observer_overrides_env(monkeypatch):
+    monkeypatch.setenv("OBSERVER_LAT", "50.08")
+    monkeypatch.setenv("OBSERVER_LON", "14.44")
+    assert tle.set_observer(48.15, 17.11) is True
+    assert tle.get_observer_latlon() == (48.15, 17.11)
+
+
+def test_set_observer_reports_change_and_invalidates_cache():
+    tle.get_cached_passes()
+    assert tle._passes_cache["data"] is not None
+
+    changed = tle.set_observer(45.0, 10.0)
+    assert changed is True
+    assert tle._passes_cache["data"] is None  # cache dropped → recompute
+
+    # Same position again → no change, no invalidation churn.
+    tle.get_cached_passes()
+    assert tle.set_observer(45.0, 10.0) is False
+    assert tle._passes_cache["data"] is not None
+
+
 def test_current_positions_shape():
     positions = tle.current_positions()
     assert len(positions) == 3

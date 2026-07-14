@@ -27,3 +27,20 @@ class Contact(Base):
     notes = Column(String, nullable=True)       # free text (decode status, errors)
     image_filename = Column(String, nullable=True)   # PNG stored in app/static/images/
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class StationStatus(Base):
+    """Current position of the (mobile) ground station, reported by the agent.
+
+    Single-row table (id=1). The agent auto-detects its location and POSTs it
+    to /observer; the web app persists it here so the map and pass predictions
+    follow the station across restarts.
+    """
+
+    __tablename__ = "station_status"
+
+    id = Column(Integer, primary_key=True)      # always 1
+    lat = Column(Float, nullable=False)
+    lon = Column(Float, nullable=False)
+    source = Column(String, nullable=False, default="manual")  # ip / manual / fallback
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

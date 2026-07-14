@@ -22,6 +22,25 @@ def test_notify_upcoming_noop_without_topic(monkeypatch):
     assert called == []
 
 
+def test_refresh_location_reports_on_change(monkeypatch):
+    import shared.tle as tle
+
+    monkeypatch.setattr(tle, "_observer_override", None)
+    monkeypatch.setattr(scheduler, "detect_location", lambda: (49.5, 17.5, "ip"))
+    reported = []
+    monkeypatch.setattr(scheduler, "post_observer", lambda *a: reported.append(a))
+
+    scheduler._refresh_location()
+    assert reported == [(49.5, 17.5, "ip")]
+    assert tle.get_observer_latlon() == (49.5, 17.5)
+
+    # Unchanged position → no re-report (unless forced).
+    scheduler._refresh_location()
+    assert len(reported) == 1
+    scheduler._refresh_location(force_report=True)
+    assert len(reported) == 2
+
+
 def test_notify_upcoming_posts_when_topic_set(monkeypatch):
     monkeypatch.setenv("NTFY_TOPIC", "test-topic")
     captured = {}

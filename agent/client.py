@@ -72,6 +72,29 @@ def post_contact(
             f.close()
 
 
+def post_observer(lat: float, lon: float, source: str) -> bool:
+    """
+    Report the station's current position to the web app, so the map pin and
+    server-side pass predictions follow the mobile station.
+
+    Best-effort: on failure just returns False — the scheduler re-reports on
+    its next location refresh, so no pending queue is needed.
+    """
+    try:
+        resp = requests.post(
+            f"{_API_URL}/observer",
+            data={"lat": str(lat), "lon": str(lon), "source": source},
+            headers={"Authorization": f"Bearer {_SECRET}"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        log.info("Observer position reported: %.4f, %.4f (%s)", lat, lon, source)
+        return True
+    except Exception as e:
+        log.warning("POST /observer failed (%s) — will retry on next refresh", e)
+        return False
+
+
 def retry_pending() -> None:
     """Retry all pending contacts. Call this at agent startup."""
     if not _PENDING_DB.exists():

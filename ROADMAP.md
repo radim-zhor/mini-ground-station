@@ -145,6 +145,23 @@ při deployi — pak je merge do `main` bezpečný.
 
 **Výstup:** tabulka reálné telemetrie (napětí, teploty) z AO-73.
 
+## Iterace L — Mobilní stanice (auto-poloha) ✅ HOTOVO 2026-07-14
+*Cíl: observer sleduje skutečnou polohu zařízení — stanice není pevná.*
+
+1. [x] `agent/location.py` — IP geolokace (ipinfo.io, HTTPS, bez klíče),
+   cache 15 min, `OBSERVER_MODE=auto|manual`, fallback na env.
+2. [x] Agent hlásí polohu appce (`POST /observer`, auth), při změně polohy
+   invaliduje pass cache (`tle.set_observer`) a přepočítá predikce.
+3. [x] App: tabulka `station_status` (migrace 0003), poloha přežije restart,
+   mapa + predikce ji používají; marker se posouvá při každém pollu.
+4. [x] Mapa: sidebar sekce „Stanice" (souřadnice, zdroj, čas hlášení).
+5. [x] Auth helper vytažen do `app/auth.py` (sdílí contacts + observer).
+
+**Ověřeno:** 41 testů, E2E (výchozí → hlášení → přesun markeru → restart →
+poloha z DB), reálná IP detekce na zařízení. Přesnost IP geolokace je ~km,
+což pro predikce bohatě stačí (footprint NOAA ~3000 km). Pozor na VPN —
+pak `OBSERVER_MODE=manual`.
+
 ## Iterace P — Prezentace / portfolio finish
 *Cíl: projekt se dá ukázat u pohovoru. ~1 večer.*
 

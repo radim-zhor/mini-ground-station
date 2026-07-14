@@ -70,9 +70,39 @@ def load_noaa_satellites() -> list[EarthSatellite]:
     ]
 
 
-def observer_location():
+# Runtime override of the observer position (mobile station). Set via
+# set_observer() — on the agent from IP geolocation, on the web app from the
+# agent's POST /observer report. Falls back to env vars / Prague default.
+_observer_override: Optional[tuple] = None
+
+
+def set_observer(lat: float, lon: float) -> bool:
+    """Override the observer position at runtime.
+
+    Returns True when the position actually changed (≥ ~100 m), in which case
+    the passes cache is invalidated so predictions recompute for the new spot.
+    """
+    global _observer_override
+    new = (round(float(lat), 4), round(float(lon), 4))
+    if _observer_override == new:
+        return False
+    _observer_override = new
+    _passes_cache["data"] = None
+    _passes_cache["updated"] = 0.0
+    return True
+
+
+def get_observer_latlon() -> tuple:
+    """Current observer (lat, lon) — runtime override or env fallback."""
+    if _observer_override is not None:
+        return _observer_override
     lat = float(os.getenv("OBSERVER_LAT", "50.08"))
     lon = float(os.getenv("OBSERVER_LON", "14.44"))
+    return (lat, lon)
+
+
+def observer_location():
+    lat, lon = get_observer_latlon()
     return wgs84.latlon(lat, lon)
 
 

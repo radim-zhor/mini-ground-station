@@ -1,7 +1,5 @@
 import csv
 import io
-import os
-import secrets
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.auth import require_agent_auth
 from app.database import get_db
 from shared.models import Contact
 
@@ -49,7 +48,7 @@ async def create_contact(
     image: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
 ):
-    _require_auth(request)
+    require_agent_auth(request)
 
     aos_dt = _parse_dt(aos, "aos")
     los_dt = _parse_dt(los, "los")
@@ -223,11 +222,3 @@ def _parse_dt(value: str, field: str) -> datetime:
     except ValueError:
         # Bad input from the agent is a client error (A6), not a 500.
         raise HTTPException(status_code=422, detail=f"Invalid {field} datetime: {value!r}")
-
-
-def _require_auth(request: Request) -> None:
-    secret = os.getenv("AGENT_SECRET", "")
-    auth = request.headers.get("Authorization", "")
-    # Constant-time compare (A5) to avoid leaking the secret via timing.
-    if not secret or not secrets.compare_digest(auth, f"Bearer {secret}"):
-        raise HTTPException(status_code=401, detail="Unauthorized")

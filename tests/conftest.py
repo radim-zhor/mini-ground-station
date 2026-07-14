@@ -39,8 +39,12 @@ def hermetic_tle(monkeypatch, tmp_path):
     shutil.copy(_FIXTURES / "noaa_tle.json", cache_dir / "noaa_tle.json")
 
     monkeypatch.setattr(tle, "CACHE_DIR", cache_dir)
-    # Reset the in-process passes cache so each test recomputes cleanly.
+    # Reset in-process state so each test starts cleanly.
     monkeypatch.setattr(tle, "_passes_cache", {"data": None, "updated": 0.0})
+    monkeypatch.setattr(tle, "_observer_override", None)
+
+    from app.routes import map as map_routes
+    monkeypatch.setattr(map_routes, "_observer_meta", {"source": None, "updated_at": None})
     return cache_dir
 
 

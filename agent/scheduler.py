@@ -15,10 +15,11 @@ from datetime import datetime, timezone
 
 import requests
 
-from agent.client import post_contact, retry_pending
+from agent.client import post_contact, post_observer, retry_pending
 from agent.decoder import decode_apt
+from agent.location import detect_location
 from agent.recorder import measure_snr_windows, record
-from shared.tle import get_cached_passes
+from shared.tle import get_cached_passes, set_observer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -75,13 +76,30 @@ def _next_upcoming_pass():
     return upcoming[0] if upcoming else None
 
 
+def _refresh_location(force_report: bool = False) -> None:
+    """Detect the station position; on change, recompute passes and tell the app.
+
+    The mobile station moves between sessions, so predictions must follow the
+    device. detect_location() caches for 15 min — calling this every loop
+    iteration is cheap.
+    """
+    lat, lon, source = detect_location()
+    changed = set_observer(lat, lon)
+    if changed:
+        log.info("Station position: %.4f, %.4f (%s)", lat, lon, source)
+    if changed or force_report:
+        post_observer(lat, lon, source)
+
+
 def run() -> None:
     log.info("Scheduler started  MOCK=%s", os.getenv("MOCK", "0"))
+    _refresh_location(force_report=True)
     retry_pending()
 
     notified: set[str] = set()  # pass keys already announced via ntfy
 
     while True:
+        _refresh_location()
         nxt = _next_upcoming_pass()
 
         if nxt is None:

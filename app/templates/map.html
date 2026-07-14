@@ -170,6 +170,10 @@
                 <h2>Satelity</h2>
                 <div id="sat-list"><p style="color:#37474f;font-size:0.75rem">Načítání…</p></div>
             </div>
+            <div class="sidebar-section" style="font-size:0.72rem;color:#546e7a;line-height:1.8;">
+                <h2>Stanice</h2>
+                <div id="station-info">—</div>
+            </div>
             <div class="sidebar-section" style="font-size:0.68rem;color:#37474f;line-height:1.8;">
                 <h2>Zkratky</h2>
                 <b style="color:#546e7a">AOS</b> — Acquisition of Signal<br>
@@ -198,14 +202,35 @@
         noWrap: true,
     }).addTo(map);
 
-    // Observer marker
+    // Observer marker — the station is mobile, so the marker follows the
+    // position reported by the agent (updated on every poll).
     const observerIcon = L.divIcon({
         html: '<div style="width:10px;height:10px;border-radius:50%;background:#4fc3f7;border:2px solid #0a0e1a;"></div>',
         iconSize: [10, 10], iconAnchor: [5, 5], className: '',
     });
-    L.marker([OBSERVER_LAT, OBSERVER_LON], { icon: observerIcon })
+    const observerMarker = L.marker([OBSERVER_LAT, OBSERVER_LON], { icon: observerIcon })
         .addTo(map)
         .bindTooltip('Observer', { permanent: false, direction: 'top' });
+
+    const SOURCE_LABELS = { ip: 'auto (IP)', manual: 'manuálně', fallback: 'fallback (env)' };
+
+    function updateObserver(obs) {
+        if (!obs) return;
+        observerMarker.setLatLng([obs.lat, obs.lon]);
+        const label = SOURCE_LABELS[obs.source] || obs.source;
+        observerMarker.setTooltipContent(
+            obs.source ? `Observer — ${label}${obs.updated ? ', ' + obs.updated : ''}` : 'Observer');
+        const info = document.getElementById('station-info');
+        if (info) {
+            info.innerHTML =
+                `Lat <span style="color:#c8d8e8">${obs.lat.toFixed(4)}°</span> ` +
+                `Lon <span style="color:#c8d8e8">${obs.lon.toFixed(4)}°</span><br>` +
+                (obs.source
+                    ? `Poloha: <span style="color:#c8d8e8">${label}</span>` +
+                      (obs.updated ? ` · ${obs.updated}` : '')
+                    : 'Poloha: výchozí (env)');
+        }
+    }
 
     // ── Satellite layer management ──────────────────────────────────────────────
     const SAT_COLORS = ['#4fc3f7', '#81c784', '#ffb74d', '#f06292'];
@@ -328,6 +353,7 @@
             if (!resp.ok) return;
             const data = await resp.json();
             updateMap(data);
+            updateObserver(data.observer);
             renderSidebar(data);
             document.getElementById('last-update').textContent =
                 'aktualizováno ' + new Date().toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
