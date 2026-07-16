@@ -183,6 +183,35 @@ def test_observer_report_persists_across_restart(client, auth_headers):
     assert map_routes._observer_meta["source"] == "ip"
 
 
+def test_position_preview_override(client):
+    resp = client.get("/satellite/position", params={"lat": 40.0, "lon": -74.0})
+    assert resp.status_code == 200
+    obs = resp.json()["observer"]
+    assert obs["lat"] == 40.0
+    assert obs["lon"] == -74.0
+    assert obs["source"] == "preview"
+    assert obs["updated"] is None
+    assert len(resp.json()["satellites"]) == 3
+
+
+def test_position_preview_rejects_bad_coords(client):
+    resp = client.get("/satellite/position", params={"lat": 200, "lon": 0})
+    assert resp.status_code == 422
+
+
+def test_position_preview_does_not_pollute_real_observer(client, auth_headers):
+    client.post(
+        "/observer",
+        data={"lat": "49.2", "lon": "16.8", "source": "ip"},
+        headers=auth_headers,
+    )
+    # A preview request must not change the persisted station position.
+    client.get("/satellite/position", params={"lat": 10.0, "lon": 20.0})
+    obs = client.get("/satellite/position").json()["observer"]
+    assert obs["lat"] == 49.2
+    assert obs["source"] == "ip"
+
+
 def test_dashboard_pagination(client, auth_headers):
     for i in range(12):
         _post(client, auth_headers, satellite="NOAA 19",

@@ -63,9 +63,16 @@ async def report_observer(
 
 
 @router.get("/satellite/position")
-async def satellite_position():
-    positions = current_positions()
-    observer_lat, observer_lon = get_observer_latlon()
+async def satellite_position(lat: Optional[float] = None, lon: Optional[float] = None):
+    # Optional preview override (map's "try another location"): compute for the
+    # given observer without persisting or touching the real station.
+    preview = lat is not None and lon is not None
+    if preview and not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise HTTPException(status_code=422, detail="Invalid coordinates")
+
+    override = (lat, lon) if preview else None
+    positions = current_positions(observer_latlon=override)
+    observer_lat, observer_lon = override if preview else get_observer_latlon()
 
     satellites = []
     for pos in positions:
@@ -86,19 +93,21 @@ async def satellite_position():
             } if np else None,
         })
 
-    updated_at: Optional[datetime] = _observer_meta["updated_at"]
-    if updated_at is not None and updated_at.tzinfo is None:
-        # SQLite drops tzinfo on round-trip; stored values are UTC.
-        updated_at = updated_at.replace(tzinfo=timezone.utc)
-    return {
-        "satellites": satellites,
-        "observer": {
+    if preview:
+        observer = {"lat": observer_lat, "lon": observer_lon, "source": "preview", "updated": None}
+    else:
+        updated_at: Optional[datetime] = _observer_meta["updated_at"]
+        if updated_at is not None and updated_at.tzinfo is None:
+            # SQLite drops tzinfo on round-trip; stored values are UTC.
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+        observer = {
             "lat": observer_lat,
             "lon": observer_lon,
             "source": _observer_meta["source"],
             "updated": updated_at.astimezone(_TZ).strftime("%H:%M %Z") if updated_at else None,
-        },
-    }
+        }
+
+    return {"satellites": satellites, "observer": observer}
 
 
 def load_station_from_db() -> None:

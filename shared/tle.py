@@ -113,9 +113,9 @@ def _footprint_radius_km(alt_km: float) -> float:
     return round(R * rho, 0)
 
 
-def predict_passes(hours: int = 24) -> list[PassInfo]:
+def predict_passes(hours: int = 24, observer_latlon: Optional[tuple] = None) -> list[PassInfo]:
     satellites = load_noaa_satellites()
-    observer = observer_location()
+    observer = wgs84.latlon(*observer_latlon) if observer_latlon else observer_location()
 
     t0 = ts.now()
     t1 = ts.tt_jd(t0.tt + hours / 24.0)
@@ -177,12 +177,19 @@ def get_cached_passes() -> list[PassInfo]:
     return passes
 
 
-def current_positions() -> list[SatPosition]:
+def current_positions(observer_latlon: Optional[tuple] = None) -> list[SatPosition]:
+    """Satellite positions + next pass per satellite.
+
+    ``observer_latlon`` overrides the observer for an ad-hoc preview (e.g. the
+    map's "try another location"). Overridden passes are computed fresh so the
+    shared cache — which belongs to the real station — is left untouched.
+    """
     satellites = load_noaa_satellites()
     now = ts.now()
 
-    # Next pass per satellite (from cache; minutes_until refreshed inside).
-    passes = get_cached_passes()
+    # Next pass per satellite. Real observer uses the shared cache; a preview
+    # observer is computed fresh so it doesn't pollute it.
+    passes = predict_passes(observer_latlon=observer_latlon) if observer_latlon else get_cached_passes()
     next_pass_map: dict[str, PassInfo] = {}
     for p in passes:
         if p.minutes_until > -(p.duration_s / 60) and p.satellite not in next_pass_map:

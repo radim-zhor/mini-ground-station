@@ -173,6 +173,21 @@
             <div class="sidebar-section" style="font-size:0.72rem;color:#546e7a;line-height:1.8;">
                 <h2>Stanice</h2>
                 <div id="station-info">—</div>
+                <div style="margin-top:0.7rem;display:flex;flex-direction:column;gap:0.4rem;">
+                    <div style="display:flex;gap:0.4rem;">
+                        <input id="in-lat" type="number" step="any" placeholder="lat"
+                               style="width:50%;background:#0f1624;color:#c8d8e8;border:1px solid #1e3a5f;border-radius:3px;padding:0.3rem;font-family:inherit;font-size:0.72rem;">
+                        <input id="in-lon" type="number" step="any" placeholder="lon"
+                               style="width:50%;background:#0f1624;color:#c8d8e8;border:1px solid #1e3a5f;border-radius:3px;padding:0.3rem;font-family:inherit;font-size:0.72rem;">
+                    </div>
+                    <div style="display:flex;gap:0.4rem;">
+                        <button id="btn-preview" style="flex:1;background:#1e3a5f;color:#4fc3f7;border:none;border-radius:3px;padding:0.35rem;font-family:inherit;font-size:0.72rem;cursor:pointer;">Náhled</button>
+                        <button id="btn-reset" style="flex:1;background:#0f1624;color:#546e7a;border:1px solid #1e3a5f;border-radius:3px;padding:0.35rem;font-family:inherit;font-size:0.72rem;cursor:pointer;">Reset</button>
+                    </div>
+                    <div style="color:#37474f;font-size:0.66rem;line-height:1.5;">
+                        Náhled přeletů z jiné polohy — jen v tomto prohlížeči, neovlivní agenta. Můžeš i kliknout do mapy.
+                    </div>
+                </div>
             </div>
             <div class="sidebar-section" style="font-size:0.68rem;color:#37474f;line-height:1.8;">
                 <h2>Zkratky</h2>
@@ -212,7 +227,32 @@
         .addTo(map)
         .bindTooltip('Observer', { permanent: false, direction: 'top' });
 
-    const SOURCE_LABELS = { ip: 'auto (IP)', manual: 'manuálně', fallback: 'fallback (env)' };
+    const SOURCE_LABELS = {
+        ip: 'auto (IP)', manual: 'manuálně', fallback: 'fallback (env)', preview: 'ruční náhled',
+    };
+
+    // ── Location preview override (browser-only, read-only) ──────────────────────
+    let previewLoc = null;  // { lat, lon } or null
+    try {
+        const saved = JSON.parse(localStorage.getItem('previewLoc'));
+        if (saved && typeof saved.lat === 'number') previewLoc = saved;
+    } catch (e) { /* ignore */ }
+
+    function setPreview(lat, lon) {
+        previewLoc = { lat, lon };
+        localStorage.setItem('previewLoc', JSON.stringify(previewLoc));
+        document.getElementById('in-lat').value = lat.toFixed(4);
+        document.getElementById('in-lon').value = lon.toFixed(4);
+        refresh();
+    }
+
+    function clearPreview() {
+        previewLoc = null;
+        localStorage.removeItem('previewLoc');
+        document.getElementById('in-lat').value = '';
+        document.getElementById('in-lon').value = '';
+        refresh();
+    }
 
     function updateObserver(obs) {
         if (!obs) return;
@@ -349,7 +389,10 @@
     // ── Polling ─────────────────────────────────────────────────────────────────
     async function refresh() {
         try {
-            const resp = await fetch('/satellite/position');
+            const url = previewLoc
+                ? `/satellite/position?lat=${previewLoc.lat}&lon=${previewLoc.lon}`
+                : '/satellite/position';
+            const resp = await fetch(url);
             if (!resp.ok) return;
             const data = await resp.json();
             updateMap(data);
@@ -360,6 +403,28 @@
         } catch (e) {
             console.warn('position fetch failed', e);
         }
+    }
+
+    // ── Preview controls ─────────────────────────────────────────────────────────
+    document.getElementById('btn-preview').addEventListener('click', () => {
+        const lat = parseFloat(document.getElementById('in-lat').value);
+        const lon = parseFloat(document.getElementById('in-lon').value);
+        if (Number.isFinite(lat) && Number.isFinite(lon)
+            && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+            setPreview(lat, lon);
+        } else {
+            alert('Zadej platné souřadnice: lat −90…90, lon −180…180.');
+        }
+    });
+    document.getElementById('btn-reset').addEventListener('click', clearPreview);
+    map.on('click', (e) => setPreview(
+        Math.round(e.latlng.lat * 1e4) / 1e4,
+        Math.round(e.latlng.lng * 1e4) / 1e4,
+    ));
+
+    if (previewLoc) {
+        document.getElementById('in-lat').value = previewLoc.lat.toFixed(4);
+        document.getElementById('in-lon').value = previewLoc.lon.toFixed(4);
     }
 
     refresh();
