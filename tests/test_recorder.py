@@ -14,7 +14,7 @@ def mock_env(monkeypatch, tmp_path):
 
 
 def test_mock_record_produces_valid_wav(mock_env):
-    path = recorder.record(frequency_hz=137_912_500, duration_s=3, satellite="NOAA 18")
+    path = recorder.record(frequency_hz=137_912_500, duration_s=3, satellite="METEOR M2-4")
     assert path.exists()
     assert path.suffix == ".wav"
 
@@ -26,13 +26,13 @@ def test_mock_record_produces_valid_wav(mock_env):
 
 
 def test_mock_record_filename_has_satellite(mock_env):
-    path = recorder.record(frequency_hz=137_620_000, duration_s=1, satellite="NOAA 15")
-    assert path.name.startswith("NOAA_15_")
+    path = recorder.record(frequency_hz=137_620_000, duration_s=1, satellite="METEOR M2-3")
+    assert path.name.startswith("METEOR_M2-3_")
 
 
 def test_measure_snr_positive_on_tone_signal(mock_env):
     # Mock signal is 2400/2600 Hz tones in the SNR band → positive dB vs noise floor.
-    path = recorder.record(frequency_hz=137_620_000, duration_s=4, satellite="NOAA 15")
+    path = recorder.record(frequency_hz=137_620_000, duration_s=4, satellite="METEOR M2-3")
     snr = recorder.measure_snr(path)
     assert snr > 0
 
@@ -43,7 +43,7 @@ def test_measure_snr_missing_file_returns_zero(tmp_path):
 
 def test_measure_snr_windows_returns_avg_and_peak(mock_env):
     # 25 s recording → two full 10 s windows; both avg and peak positive.
-    path = recorder.record(frequency_hz=137_620_000, duration_s=25, satellite="NOAA 15")
+    path = recorder.record(frequency_hz=137_620_000, duration_s=25, satellite="METEOR M2-3")
     avg, peak = recorder.measure_snr_windows(path)
     assert avg > 0
     assert peak >= avg
@@ -51,7 +51,7 @@ def test_measure_snr_windows_returns_avg_and_peak(mock_env):
 
 def test_measure_snr_windows_short_file_falls_back(mock_env):
     # Shorter than one window → falls back to a whole-file measurement.
-    path = recorder.record(frequency_hz=137_620_000, duration_s=3, satellite="NOAA 15")
+    path = recorder.record(frequency_hz=137_620_000, duration_s=3, satellite="METEOR M2-3")
     avg, peak = recorder.measure_snr_windows(path)
     assert avg == peak
     assert avg > 0

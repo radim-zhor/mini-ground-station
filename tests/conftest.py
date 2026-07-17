@@ -30,13 +30,13 @@ def hermetic_tle(monkeypatch, tmp_path):
     """Point shared.tle at a fresh copy of the fixture TLE cache.
 
     The freshly written file is always within the 12 h TTL, so
-    load_noaa_satellites never falls through to the network.
+    load_satellites never falls through to the network.
     """
     import shared.tle as tle
 
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
-    shutil.copy(_FIXTURES / "noaa_tle.json", cache_dir / "noaa_tle.json")
+    shutil.copy(_FIXTURES / "satellites_tle.json", cache_dir / "satellites_tle.json")
 
     monkeypatch.setattr(tle, "CACHE_DIR", cache_dir)
     # Reset in-process state so each test starts cleanly.

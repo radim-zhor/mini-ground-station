@@ -3,7 +3,7 @@
 
 def _valid_contact():
     return {
-        "satellite": "NOAA 18",
+        "satellite": "METEOR M2-4",
         "aos": "2026-07-02T20:00:00+00:00",
         "los": "2026-07-02T20:12:00+00:00",
         "duration_s": "720",
@@ -33,17 +33,17 @@ def test_post_contact_ok(client, auth_headers):
 
 def test_post_contact_then_appears_on_dashboard(client, auth_headers):
     data = _valid_contact()
-    data["satellite"] = "NOAA 15"
+    data["satellite"] = "METEOR M2-3"
     client.post("/contacts", data=data, headers=auth_headers)
     resp = client.get("/dashboard")
     assert resp.status_code == 200
-    assert "NOAA 15" in resp.text
+    assert "METEOR M2-3" in resp.text
 
 
 def test_post_contact_is_idempotent(client, auth_headers):
     # Agent retries a pending contact → same (satellite, aos) must not duplicate (A4).
     data = _valid_contact()
-    data["satellite"] = "NOAA 19"
+    data["satellite"] = "METEOR M2-2"
     data["aos"] = "2026-07-02T21:30:00+00:00"
     first = client.post("/contacts", data=data, headers=auth_headers)
     second = client.post("/contacts", data=data, headers=auth_headers)
@@ -64,14 +64,14 @@ def test_post_contact_invalid_date_is_client_error(client, auth_headers):
 def test_passes_page_renders(client):
     resp = client.get("/passes")
     assert resp.status_code == 200
-    assert "NOAA" in resp.text
+    assert "METEOR" in resp.text
 
 
 def test_satellite_position_json(client):
     resp = client.get("/satellite/position")
     assert resp.status_code == 200
     body = resp.json()
-    assert len(body["satellites"]) == 3
+    assert len(body["satellites"]) == 2
     assert "observer" in body
     sat = body["satellites"][0]
     assert {"name", "lat", "lon", "alt_km", "footprint_radius_km", "ground_track"} <= sat.keys()
@@ -99,36 +99,36 @@ def _csv_rows(client):
 
 
 def test_quality_derived_from_snr(client, auth_headers):
-    _post(client, auth_headers, satellite="NOAA 18", aos="2026-07-03T01:00:00+00:00", snr=14)
-    _post(client, auth_headers, satellite="NOAA 15", aos="2026-07-03T02:00:00+00:00", snr=5)
-    _post(client, auth_headers, satellite="NOAA 19", aos="2026-07-03T03:00:00+00:00", snr=0.5)
+    _post(client, auth_headers, satellite="METEOR M2-4", aos="2026-07-03T01:00:00+00:00", snr=14)
+    _post(client, auth_headers, satellite="METEOR M2-3", aos="2026-07-03T02:00:00+00:00", snr=5)
+    _post(client, auth_headers, satellite="METEOR M2-2", aos="2026-07-03T03:00:00+00:00", snr=0.5)
     rows = {r["satellite"]: r for r in _csv_rows(client)}
-    assert rows["NOAA 18"]["quality"] == "ok"
-    assert rows["NOAA 15"]["quality"] == "degraded"
-    assert rows["NOAA 19"]["quality"] == "lost"
+    assert rows["METEOR M2-4"]["quality"] == "ok"
+    assert rows["METEOR M2-3"]["quality"] == "degraded"
+    assert rows["METEOR M2-2"]["quality"] == "lost"
 
 
 def test_avg_snr_stored(client, auth_headers):
-    _post(client, auth_headers, satellite="NOAA 18", aos="2026-07-03T04:00:00+00:00",
+    _post(client, auth_headers, satellite="METEOR M2-4", aos="2026-07-03T04:00:00+00:00",
           snr=12, avg_snr=7.7)
     rows = {r["satellite"]: r for r in _csv_rows(client)}
-    assert rows["NOAA 18"]["avg_snr"] == "7.7"
+    assert rows["METEOR M2-4"]["avg_snr"] == "7.7"
 
 
 def test_export_csv_has_header_and_rows(client, auth_headers):
-    _post(client, auth_headers, satellite="NOAA 15", aos="2026-07-03T05:00:00+00:00")
+    _post(client, auth_headers, satellite="METEOR M2-3", aos="2026-07-03T05:00:00+00:00")
     resp = client.get("/contacts/export.csv")
     assert resp.status_code == 200
     assert "satellite,aos,los" in resp.text
-    assert "NOAA 15" in resp.text
+    assert "METEOR M2-3" in resp.text
 
 
 def test_dashboard_filter_by_satellite(client, auth_headers):
-    _post(client, auth_headers, satellite="NOAA 15", aos="2026-07-03T06:00:00+00:00",
+    _post(client, auth_headers, satellite="METEOR M2-3", aos="2026-07-03T06:00:00+00:00",
           max_elevation=11.1)
-    _post(client, auth_headers, satellite="NOAA 18", aos="2026-07-03T07:00:00+00:00",
+    _post(client, auth_headers, satellite="METEOR M2-4", aos="2026-07-03T07:00:00+00:00",
           max_elevation=62.5)
-    resp = client.get("/dashboard", params={"sat": "NOAA 18"})
+    resp = client.get("/dashboard", params={"sat": "METEOR M2-4"})
     assert resp.status_code == 200
     # Elevation only appears inside a contact card, so it reflects filtering
     # (satellite names also appear in the filter dropdown and can't be used here).
@@ -191,7 +191,7 @@ def test_position_preview_override(client):
     assert obs["lon"] == -74.0
     assert obs["source"] == "preview"
     assert obs["updated"] is None
-    assert len(resp.json()["satellites"]) == 3
+    assert len(resp.json()["satellites"]) == 2
 
 
 def test_position_preview_rejects_bad_coords(client):
@@ -214,7 +214,7 @@ def test_position_preview_does_not_pollute_real_observer(client, auth_headers):
 
 def test_dashboard_pagination(client, auth_headers):
     for i in range(12):
-        _post(client, auth_headers, satellite="NOAA 19",
+        _post(client, auth_headers, satellite="METEOR M2-2",
               aos=f"2026-07-04T{i:02d}:00:00+00:00")
     page1 = client.get("/dashboard")
     page2 = client.get("/dashboard", params={"page": 2})

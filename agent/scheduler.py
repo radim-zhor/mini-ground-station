@@ -1,7 +1,7 @@
 """
 scheduler.py — satellite pass scheduler
 
-Continuously watches for upcoming NOAA passes, triggers the recorder
+Continuously watches for upcoming Meteor-M passes, triggers the recorder
 at AOS, and decodes the recording after LOS.
 
 Usage (run as a module from the repo root — agent/ uses absolute imports):
@@ -34,11 +34,11 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# APT downlink frequencies (Hz)
+# LRPT downlink frequencies (Hz). The NOAA APT birds these replaced are all
+# decommissioned (the last, NOAA-15, on 2025-08-19) — see shared/tle.py.
 FREQUENCIES: dict[str, int] = {
-    "NOAA 15": 137_620_000,
-    "NOAA 18": 137_912_500,
-    "NOAA 19": 137_100_000,
+    "METEOR M2-4": 137_900_000,   # primary; 137.1 MHz is the backup downlink
+    "METEOR M2-3": 137_900_000,   # weaker — antenna did not deploy correctly
 }
 
 POLL_INTERVAL = 30   # seconds between pass-list refreshes

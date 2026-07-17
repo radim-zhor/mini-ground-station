@@ -28,8 +28,8 @@ _TZ = ZoneInfo("Europe/Prague")
 
 PAGE_SIZE = 10
 
-# Reception-quality thresholds on peak SNR (dB). Heuristic for NOAA APT — a
-# decoded image can never be classed "lost", only "ok" or "degraded".
+# Reception-quality thresholds on peak SNR (dB). Heuristic — a decoded image
+# can never be classed "lost", only "ok" or "degraded".
 QUALITY_OK_DB = 10.0
 QUALITY_DEGRADED_DB = 3.0
 

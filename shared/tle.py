@@ -14,8 +14,16 @@ from skyfield.api import EarthSatellite, load, wgs84
 CACHE_DIR = Path(__file__).parent.parent / ".cache"
 SATNOGS_TLE_URL = "https://db.satnogs.org/api/tle/?format=json"
 
-# NOAA NORAD IDs: 15, 18, 19 (weather imaging satellites)
-NOAA_NORAD_IDS = {25338, 28654, 33591}
+# Tracked weather satellites (NORAD IDs).
+#
+# The NOAA APT birds this project originally targeted are all gone: NOAA-18 was
+# decommissioned 2025-06-06, NOAA-19 on 2025-08-13 and NOAA-15 — the last APT
+# transmitter in orbit — on 2025-08-19. No satellite transmits APT any more, so
+# we track the Meteor-M LRPT birds instead (same 137 MHz band, digital QPSK).
+#
+#   59051 = METEOR M2-4 — primary, healthy
+#   57166 = METEOR M2-3 — backup, weaker (antenna did not deploy correctly)
+SATELLITE_NORAD_IDS = {59051, 57166}
 
 CACHE_TTL_SECONDS = 12 * 3600  # refresh TLE every 12 hours
 PASSES_CACHE_TTL = 300          # recompute passes every 5 minutes
@@ -48,10 +56,10 @@ class SatPosition:
 
 
 def _cache_path() -> Path:
-    return CACHE_DIR / "noaa_tle.json"
+    return CACHE_DIR / "satellites_tle.json"
 
 
-def load_noaa_satellites() -> list[EarthSatellite]:
+def load_satellites() -> list[EarthSatellite]:
     CACHE_DIR.mkdir(exist_ok=True)
     cache = _cache_path()
 
@@ -61,7 +69,7 @@ def load_noaa_satellites() -> list[EarthSatellite]:
         resp = requests.get(SATNOGS_TLE_URL, timeout=10)
         resp.raise_for_status()
         all_tles = resp.json()
-        data = [e for e in all_tles if e.get("norad_cat_id") in NOAA_NORAD_IDS]
+        data = [e for e in all_tles if e.get("norad_cat_id") in SATELLITE_NORAD_IDS]
         cache.write_text(json.dumps(data))
 
     return [
@@ -114,7 +122,7 @@ def _footprint_radius_km(alt_km: float) -> float:
 
 
 def predict_passes(hours: int = 24, observer_latlon: Optional[tuple] = None) -> list[PassInfo]:
-    satellites = load_noaa_satellites()
+    satellites = load_satellites()
     observer = wgs84.latlon(*observer_latlon) if observer_latlon else observer_location()
 
     t0 = ts.now()
@@ -184,7 +192,7 @@ def current_positions(observer_latlon: Optional[tuple] = None) -> list[SatPositi
     map's "try another location"). Overridden passes are computed fresh so the
     shared cache — which belongs to the real station — is left untouched.
     """
-    satellites = load_noaa_satellites()
+    satellites = load_satellites()
     now = ts.now()
 
     # Next pass per satellite. Real observer uses the shared cache; a preview

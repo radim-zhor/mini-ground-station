@@ -3,16 +3,17 @@ import math
 
 from shared import tle
 
-
-def test_load_noaa_satellites_parses_three():
-    sats = tle.load_noaa_satellites()
-    names = {s.name for s in sats}
-    assert names == {"NOAA 15", "NOAA 18", "NOAA 19"}
+TRACKED = {"METEOR M2-3", "METEOR M2-4"}
 
 
-def test_load_noaa_satellites_strips_leading_zero():
+def test_load_satellites_parses_tracked_birds():
+    sats = tle.load_satellites()
+    assert {s.name for s in sats} == TRACKED
+
+
+def test_load_satellites_strips_leading_zero():
     # tle0 in the SatNOGS feed is prefixed with "0 " — must not leak into name.
-    sats = tle.load_noaa_satellites()
+    sats = tle.load_satellites()
     assert all(not s.name.startswith("0") for s in sats)
 
 
@@ -33,10 +34,10 @@ def test_footprint_radius_formula():
 
 def test_predict_passes_invariants():
     passes = tle.predict_passes(hours=48)
-    # Over 48 h the three NOAA sats always produce at least one pass from mid-lat.
+    # Over 48 h the tracked birds always produce at least one pass from mid-lat.
     assert passes, "expected at least one pass in 48 h"
     for p in passes:
-        assert p.satellite in {"NOAA 15", "NOAA 18", "NOAA 19"}
+        assert p.satellite in TRACKED
         assert p.los > p.aos
         assert p.duration_s > 0
         assert -90 <= p.max_elevation <= 90
@@ -82,7 +83,7 @@ def test_set_observer_reports_change_and_invalidates_cache():
 
 def test_current_positions_shape():
     positions = tle.current_positions()
-    assert len(positions) == 3
+    assert len(positions) == 2
     for pos in positions:
         assert -90 <= pos.lat <= 90
         assert -180 <= pos.lon <= 180

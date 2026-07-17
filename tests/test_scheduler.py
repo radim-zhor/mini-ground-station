@@ -7,7 +7,7 @@ import agent.scheduler as scheduler
 
 def _fake_pass():
     return SimpleNamespace(
-        satellite="NOAA 18",
+        satellite="METEOR M2-4",
         aos=datetime.now(timezone.utc) + timedelta(minutes=9),
         max_elevation=62.0,
         duration_s=720,
@@ -53,4 +53,4 @@ def test_notify_upcoming_posts_when_topic_set(monkeypatch):
     scheduler.notify_upcoming(_fake_pass())
 
     assert captured["url"] == "https://ntfy.sh/test-topic"
-    assert b"NOAA 18" in captured["data"]
+    assert b"METEOR M2-4" in captured["data"]
