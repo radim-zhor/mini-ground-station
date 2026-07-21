@@ -1,14 +1,29 @@
 """Tests for shared.tle — TLE parsing, pass prediction, geometry."""
+import json
 import math
+from pathlib import Path
 
 from shared import tle
 
-TRACKED = {"METEOR M2-3", "METEOR M2-4"}
+# Derived from the fixture rather than hard-coded, so adding a satellite to
+# SATELLITE_NORAD_IDS doesn't mean editing counts in three test files.
+_FIXTURE = json.loads(
+    (Path(__file__).parent / "fixtures" / "satellites_tle.json").read_text()
+)
+TRACKED = {e["tle0"].lstrip("0 ") for e in _FIXTURE}
 
 
 def test_load_satellites_parses_tracked_birds():
     sats = tle.load_satellites()
     assert {s.name for s in sats} == TRACKED
+
+
+def test_tracked_set_covers_meteor_orbcomm_and_iss():
+    # The station tracks three families; losing one silently would gut the
+    # pass schedule, so assert the mix explicitly.
+    assert {"METEOR M2-3", "METEOR M2-4"} <= TRACKED
+    assert sum(n.startswith("ORBCOMM") for n in TRACKED) >= 10
+    assert any(n.startswith("ISS") for n in TRACKED)
 
 
 def test_load_satellites_strips_leading_zero():
@@ -83,7 +98,7 @@ def test_set_observer_reports_change_and_invalidates_cache():
 
 def test_current_positions_shape():
     positions = tle.current_positions()
-    assert len(positions) == 2
+    assert len(positions) == len(TRACKED)
     for pos in positions:
         assert -90 <= pos.lat <= 90
         assert -180 <= pos.lon <= 180

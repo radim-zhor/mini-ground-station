@@ -14,16 +14,36 @@ from skyfield.api import EarthSatellite, load, wgs84
 CACHE_DIR = Path(__file__).parent.parent / ".cache"
 SATNOGS_TLE_URL = "https://db.satnogs.org/api/tle/?format=json"
 
-# Tracked weather satellites (NORAD IDs).
+# Tracked satellites (NORAD IDs).
 #
 # The NOAA APT birds this project originally targeted are all gone: NOAA-18 was
 # decommissioned 2025-06-06, NOAA-19 on 2025-08-13 and NOAA-15 — the last APT
-# transmitter in orbit — on 2025-08-19. No satellite transmits APT any more, so
-# we track the Meteor-M LRPT birds instead (same 137 MHz band, digital QPSK).
+# transmitter in orbit — on 2025-08-19. No satellite transmits APT any more.
 #
-#   59051 = METEOR M2-4 — primary, healthy
-#   57166 = METEOR M2-3 — backup, weaker (antenna did not deploy correctly)
-SATELLITE_NORAD_IDS = {59051, 57166}
+# Meteor-M gives only ~3 usable passes a day, so the station also tracks the
+# Orbcomm constellation — 11 birds in the same 137-138 MHz band, i.e. inside the
+# FBP-137s passband, needing no hardware change — plus the ISS. Measured from
+# Brno that is ~42 passes above 20° per day instead of 3.
+METEOR_NORAD_IDS = {
+    59051,  # METEOR M2-4 — LRPT, healthy
+    57166,  # METEOR M2-3 — LRPT, weaker (antenna did not deploy correctly)
+}
+
+# Orbcomm: commercial data constellation, transmits continuously (no imaging
+# window to wait for). SDPSK 4800 bps on 137.25-137.80 MHz.
+ORBCOMM_NORAD_IDS = {
+    40087, 40086,          # FM 107, FM 109
+    41183, 41182, 41179,   # FM 118, FM 110, FM 114
+    25984,                 # FM 36
+    41187, 41188,          # FM 108, FM 117
+    41184, 41185, 41189,   # FM 112, FM 113, FM 116
+}
+
+# ISS: APRS digipeater on 145.825 MHz — outside the FBP-137s passband, so the
+# filter has to be bypassed for it (the LNA covers 50 MHz-4 GHz and stays).
+ISS_NORAD_IDS = {25544}
+
+SATELLITE_NORAD_IDS = METEOR_NORAD_IDS | ORBCOMM_NORAD_IDS | ISS_NORAD_IDS
 
 CACHE_TTL_SECONDS = 12 * 3600  # refresh TLE every 12 hours
 PASSES_CACHE_TTL = 300          # recompute passes every 5 minutes

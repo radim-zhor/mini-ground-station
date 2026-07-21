@@ -34,11 +34,32 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# LRPT downlink frequencies (Hz). The NOAA APT birds these replaced are all
-# decommissioned (the last, NOAA-15, on 2025-08-19) — see shared/tle.py.
+# Downlink frequencies (Hz), keyed by the satellite name as it appears in the
+# SatNOGS TLE. The NOAA APT birds these replaced are all decommissioned (the
+# last, NOAA-15, on 2025-08-19) — see shared/tle.py.
+#
+# NOTE: only the Meteor entries are recordable by this agent today. Orbcomm is
+# SDPSK 4800 and the ISS downlink is 1200 baud AFSK packet; neither survives the
+# FM → 48 kHz WAV path in recorder.py. They are listed so scheduling, logging
+# and the map stay correct while the capture path is reworked.
 FREQUENCIES: dict[str, int] = {
-    "METEOR M2-4": 137_900_000,   # primary; 137.1 MHz is the backup downlink
-    "METEOR M2-3": 137_900_000,   # weaker — antenna did not deploy correctly
+    # Meteor-M — LRPT, 137.9 MHz (137.1 is the backup downlink)
+    "METEOR M2-4": 137_900_000,
+    "METEOR M2-3": 137_900_000,
+    # Orbcomm — SDPSK 4800 bps, inside the FBP-137s passband
+    "ORBCOMM FM 107": 137_250_000,
+    "ORBCOMM FM 109": 137_250_000,
+    "ORBCOMM FM 118": 137_287_500,
+    "ORBCOMM FM 110": 137_287_500,
+    "ORBCOMM FM 114": 137_287_500,
+    "ORBCOMM FM 36": 137_440_000,
+    "ORBCOMM FM 108": 137_460_000,
+    "ORBCOMM FM 117": 137_460_000,
+    "ORBCOMM FM 112": 137_662_500,
+    "ORBCOMM FM 113": 137_662_500,
+    "ORBCOMM FM 116": 137_662_500,
+    # ISS — APRS digipeater; outside the filter passband (bypass it)
+    "ISS (ZARYA)": 145_825_000,
 }
 
 POLL_INTERVAL = 30   # seconds between pass-list refreshes

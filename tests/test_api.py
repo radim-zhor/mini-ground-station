@@ -1,4 +1,11 @@
 """Tests for the FastAPI web app routes."""
+import json
+from pathlib import Path
+
+# Derived from the fixture so adding a satellite doesn't mean editing counts here.
+EXPECTED_SATS = len(
+    json.loads((Path(__file__).parent / "fixtures" / "satellites_tle.json").read_text())
+)
 
 
 def _valid_contact():
@@ -71,7 +78,7 @@ def test_satellite_position_json(client):
     resp = client.get("/satellite/position")
     assert resp.status_code == 200
     body = resp.json()
-    assert len(body["satellites"]) == 2
+    assert len(body["satellites"]) == EXPECTED_SATS
     assert "observer" in body
     sat = body["satellites"][0]
     assert {"name", "lat", "lon", "alt_km", "footprint_radius_km", "ground_track"} <= sat.keys()
@@ -191,7 +198,7 @@ def test_position_preview_override(client):
     assert obs["lon"] == -74.0
     assert obs["source"] == "preview"
     assert obs["updated"] is None
-    assert len(resp.json()["satellites"]) == 2
+    assert len(resp.json()["satellites"]) == EXPECTED_SATS
 
 
 def test_position_preview_rejects_bad_coords(client):
