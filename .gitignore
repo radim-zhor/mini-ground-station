@@ -7,6 +7,7 @@ __pycache__/
 *.db
 recordings/
 noaa-apt/
+orbcomm-receiver/
 *.png
 *.wav
 .pytest_cache/
