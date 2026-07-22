@@ -12,8 +12,9 @@ Two separate runtimes sharing one repo:
 
 **Local agent (Mac)** — runs continuously, owns all SDR/DSP logic:
 - Watches TLE data, waits for passes using `skyfield`
-- Records passes as 48 kHz WAV via `pyrtlsdr`
-- Decodes: NOAA APT via `noaa-apt` CLI (subprocess), FUNCUBE-1 via AX.25 parser
+- Records passes as baseband IQ (`.cs16`) via `pyrtlsdr`, one directory per pass
+- Decodes from the stored IQ after the pass (SatDump for Meteor, `file_decoder.py`
+  for Orbcomm) — recording must keep real time, decoding must not
 - POSTs results to web app REST API; on network failure writes to local SQLite as "pending" and retries next pass
 
 **Web app (Render.com Starter)** — FastAPI + HTMX + Leaflet.js:
@@ -26,11 +27,15 @@ Two separate runtimes sharing one repo:
 ground-station/
 ├── agent/
 │   ├── scheduler.py   # skyfield pass prediction, triggers recorder
-│   ├── recorder.py    # pyrtlsdr → 48 kHz WAV; mock mode for CI
-│   └── decoder.py     # noaa-apt subprocess (APT) / AX.25 parser (FUNCUBE-1)
+│   ├── recorder.py    # pyrtlsdr → interleaved int16 IQ (.cs16); mock mode for CI
+│   ├── retention.py   # drops IQ after a successful decode, caps recordings/
+│   ├── events.py      # the pass timeline (AOS, signal, decode, result)
+│   ├── health.py      # SDR/bias tee/gain/disk state for the console
+│   ├── decoder.py     # dispatcher: satdump (Meteor) / file_decoder.py (Orbcomm)
+│   └── orbcomm.py     # bridge from our .cs16 to the vendored Orbcomm decoder
 ├── app/
 │   ├── main.py        # FastAPI entrypoint
-│   ├── routes/        # /passes, /contacts, /satellite/position, etc.
+│   ├── routes/        # /passes, /pass, /contacts, /satellite/position, etc.
 │   └── templates/     # Jinja2 + HTMX + Leaflet.js
 └── shared/
     ├── tle.py         # TLE fetch (Celestrak) + skyfield wrappers
@@ -41,10 +46,45 @@ ground-station/
 
 - **Astrodynamics:** `skyfield` only — never use `sgp4` directly. It provides `find_events()`, `altaz()`, and all coordinate transforms out of the box.
 - **TLE source:** SatNOGS API (`https://db.satnogs.org/api/tle/`), not Celestrak (their GP API returns 404 as of 2026-03). TLE cached in `.cache/noaa_tle.json`, TTL 12h. NORAD IDs hardcoded in `shared/tle.py` for NOAA 15/18/19.
-- **Live map updates:** HTMX polling (`hx-trigger="every 5s"`), no WebSocket or SSE.
-- **APT decoding:** shell out to `noaa-apt` binary, do not implement DSP manually.
+- **Live map updates:** polling every 5 s, no WebSocket or SSE.
+- **The agent pushes, the browser polls.** The agent is behind NAT, so the app
+  can never ask it anything: it POSTs its position to `/observer` and its live
+  state to `/station/live`, and pages poll the app. The live state is in memory
+  (`app/routes/station.py`) — it describes what the station is doing *now*, and
+  after a restart "offline" is the honest answer until the next heartbeat.
+- **The station never says "lock".** The recorder does not demodulate, so it
+  cannot know: the timeline reports `signal_acquired` / `signal_lost` derived
+  from the measured SNR, which is what the station actually knows.
+- **Decoding:** always shell out to an existing decoder (SatDump, `noaa-apt`,
+  the vendored Orbcomm `file_decoder.py`), never implement DSP by hand.
 - **CubeSat target:** FUNCUBE-1 / AO-73 at 145.935 MHz. Telemetry spec at funcube.org.uk.
-- **IQ storage:** record directly as 48 kHz WAV (~55 MB/pass). Raw IQ retention policy (48h) to be added in iteration 4b.
+- **Recording format: baseband IQ, never demodulated audio.** FM demodulation
+  destroys the phase that Meteor (OQPSK) and Orbcomm (SDPSK) carry data in.
+  `recorder.py` streams interleaved int16 IQ to `recordings/<pass>/<pass>.cs16`
+  with a `meta.json` sidecar, readable by SatDump (`--baseband_format s16`) or
+  `np.fromfile(..., np.int16)` with no conversion.
+- **Recording and decoding are separate.** Recording must keep up with the pass
+  in real time; decoding must not. Verified 22. 7.: a realtime Orbcomm decoder
+  failed while the same pass decoded from stored IQ at 0.0 % PER.
+- **Sample rate is per satellite** (`SAMPLE_RATES` in `scheduler.py`): Meteor
+  1 Msps, Orbcomm 1.2288 Msps (= 256 × 4800 baud, assumed by the upstream
+  decoder), ISS 250 ksps.
+- **Orbcomm is recorded at 137.5 MHz centre**, not on the satellite's own
+  channel: all Orbcomm channels then fit in the band, none sits on the DC
+  spike, and the file matches what the vendored decoder was proven against.
+- **Decoder dispatch is by satellite name** (`agent/decoder.py`), and it never
+  raises: a failed decode returns `success=False`, which keeps the IQ for a
+  manual re-run. The Orbcomm bridge (`agent/orbcomm.py`) picks the best 2 s
+  window from the recorded SNR profile, writes it as the `.mat` the upstream
+  script expects and runs it with `MPLBACKEND=Agg` (the script ends in
+  `plt.show()` and would otherwise block forever).
+- **Retention is part of the capture path** (`agent/retention.py`): ~3 GB per
+  10-minute pass at 1.2288 Msps. IQ is deleted after a *successful* decode and
+  kept after a failure; `recordings/` is capped by `RECORDINGS_MAX_GB`, oldest
+  pass first. Only directories containing a `meta.json` the agent wrote are ever
+  deleted.
+- **Bias tee on, gain manual.** The LNA is bias-tee powered (measured +14 dB);
+  AGC overloads with an LNA ahead of the tuner.
 - **Notifications:** ntfy.sh via `requests.post()`, no SMTP.
 - **Agent → app auth:** shared secret in `Authorization` header (env var on both sides).
 - **Mobile station:** the ground station moves. The agent auto-detects its position
@@ -54,6 +94,11 @@ ground-station/
   `OBSERVER_MODE=manual` pins them (e.g. when on VPN).
 - **DB migrations:** Alembic (`alembic upgrade head` runs in the Render Start Command
   before uvicorn). Never rely on `create_all` for schema changes on production.
+- **Not every pass is a picture.** `Contact.contact_type` is `image` (Meteor
+  LRPT) or `telemetry` (Orbcomm frames); the decoder's output lives in the
+  `telemetry` JSON column, because its shape differs per decoder and only the
+  dashboard reads it. Telemetry quality is derived from PER, not SNR — a clean
+  decode at modest SNR is a good pass.
 
 ## Development setup
 
@@ -97,4 +142,9 @@ User-facing tutorials live in `docs/`:
 | `OBSERVER_LON` | agent + app | Observer longitude (fallback when auto-detection fails) |
 | `MOCK` | agent | Set to `1` to use synthetic IQ data instead of RTL-SDR |
 | `NTFY_TOPIC` | agent | ntfy.sh topic for pass notifications |
-| `SDR_GAIN` | agent | Tuner gain in dB, or `auto` for AGC (default 49.6) |
+| `SDR_GAIN` | agent | Tuner gain in dB, or `auto` for AGC (default 20.7 — the value verified with this station's LNA) |
+| `SDR_BIAS_TEE` | agent | `0` disables bias-tee power to the LNA (default on) |
+| `RECORDINGS_MAX_GB` | agent | Size cap for `recordings/`; oldest passes are dropped first (default 20) |
+| `LNA_PRESENT` | agent | `0` when no LNA is in the path, so the bias-tee warning stays quiet (default on) |
+| `SATDUMP_BIN` | agent | Path to the satdump CLI (default: `satdump` in PATH, then the macOS .app) |
+| `SATDUMP_METEOR_PIPELINE` | agent | LRPT pipeline (default `meteor_m2-x_lrpt` = 72k; `meteor_m2-x_lrpt_80k` for the 80k mode) |

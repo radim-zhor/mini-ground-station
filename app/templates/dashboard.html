@@ -189,6 +189,63 @@
 
         .contact-notes { color: #607d8b; font-size: 0.72rem; margin-top: 0.3rem; }
 
+        /* Telemetry passes have no picture to show — these numbers are the result. */
+        .telemetry {
+            border-top: 1px solid #1e3a5f;
+            padding: 0.8rem 1.2rem;
+            font-size: 0.75rem;
+        }
+
+        .tele-row { display: flex; gap: 2.5rem; flex-wrap: wrap; }
+
+        .tele-stat { display: flex; flex-direction: column; gap: 0.2rem; }
+        .tele-stat .k { color: #546e7a; font-size: 0.68rem; letter-spacing: 1px; text-transform: uppercase; }
+        .tele-stat .v { color: #c8d8e8; font-size: 1.1rem; }
+        .tele-stat .v.per-good { color: #81c784; }
+        .tele-stat .v.per-bad  { color: #ffb74d; }
+
+        .tele-types { margin-top: 0.8rem; display: flex; gap: 0.4rem; flex-wrap: wrap; }
+
+        .chip {
+            background: #12203a;
+            border: 1px solid #1e3a5f;
+            border-radius: 3px;
+            padding: 0.1rem 0.45rem;
+            color: #607d8b;
+            font-size: 0.7rem;
+        }
+
+        .chip b { color: #c8d8e8; font-weight: normal; }
+
+        .tele-ephem {
+            margin-top: 0.8rem;
+            padding-top: 0.6rem;
+            border-top: 1px dashed #1e3a5f;
+            color: #607d8b;
+            line-height: 1.8;
+        }
+
+        .tele-ephem .k { color: #546e7a; text-transform: uppercase; font-size: 0.68rem; letter-spacing: 1px; margin-right: 0.4rem; }
+        .tele-ephem .v { color: #c8d8e8; }
+
+        /* What happened during the pass, months later. */
+        .events { border-top: 1px solid #1e3a5f; padding: 0.6rem 1.2rem; }
+
+        .events summary {
+            color: #546e7a;
+            font-size: 0.72rem;
+            cursor: pointer;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .events summary:hover { color: #4fc3f7; }
+        .events ol { list-style: none; margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.25rem; }
+        .events li { display: flex; gap: 0.6rem; align-items: baseline; font-size: 0.72rem; }
+        .events .t { color: #546e7a; min-width: 4.6rem; }
+        .events .kind { color: #4fc3f7; min-width: 9.5rem; }
+        .events .detail { color: #607d8b; }
+
         .pager {
             display: flex;
             align-items: center;
@@ -209,6 +266,8 @@
         <h1>Mini Ground Station</h1>
         <nav>
             <a href="/passes">Přelety</a>
+            &nbsp;·&nbsp;
+            <a href="/pass">Přelet</a>
             &nbsp;·&nbsp;
             <a href="/map">Mapa</a>
             &nbsp;·&nbsp;
@@ -287,8 +346,70 @@
                     <img src="/static/images/{{ c.image_filename }}" alt="Snímek {{ c.satellite }}">
                     <div class="img-label">Meteor-M LRPT — dekódováno přes SatDump</div>
                 </div>
+                {% elif c.contact_type == 'telemetry' and c.telemetry %}
+                {% set t = c.telemetry %}
+                <div class="telemetry">
+                    <div class="tele-row">
+                        <div class="tele-stat">
+                            <span class="k">Rámce</span>
+                            <span class="v">{{ t.packets if t.packets is not none else '–' }}</span>
+                        </div>
+                        <div class="tele-stat">
+                            <span class="k">PER</span>
+                            <span class="v {{ 'per-good' if t.per is not none and t.per <= 5 else 'per-bad' }}">
+                                {{ '%.1f%%' % t.per if t.per is not none else '–' }}
+                            </span>
+                        </div>
+                        {% if t.freq_offset_hz is not none %}
+                        <div class="tele-stat">
+                            <span class="k">Zbytkový offset</span>
+                            <span class="v">{{ '%.0f Hz' % t.freq_offset_hz }}</span>
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    {% if t.packet_types %}
+                    <div class="tele-types">
+                        {% for kind, count in t.packet_types.items() %}
+                        <span class="chip">{{ kind }} <b>{{ count }}</b></span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+
+                    {% for e in (t.ephemeris or []) %}
+                    <div class="tele-ephem">
+                        <span class="k">Efemeridy</span>
+                        {{ '%.4f' % e.lat }}, {{ '%.4f' % e.lon }}
+                        &nbsp;·&nbsp; výška <span class="v">{{ '%.0f km' % e.alt_km }}</span>
+                        &nbsp;·&nbsp; rychlost <span class="v">{{ '%.0f m/s' % e.velocity_ms }}</span>
+                        {% if e.ephemeris_diff_km is not none %}
+                        &nbsp;·&nbsp; odchylka od TLE <span class="v">{{ '%.1f km' % e.ephemeris_diff_km }}</span>
+                        {% endif %}
+                        {% if e.satellite_time %}
+                        <br><span class="k">Čas ze satelitu</span> {{ e.satellite_time }} Z
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% elif c.contact_type == 'telemetry' %}
+                <div class="no-image">telemetrie nedekódována</div>
                 {% else %}
                 <div class="no-image">snímek nedostupný</div>
+                {% endif %}
+
+                {% if c.events %}
+                <details class="events">
+                    <summary>Průběh přeletu ({{ c.events|length }} událostí)</summary>
+                    <ol>
+                        {% for e in c.events %}
+                        <li>
+                            <span class="t">{{ e.at[11:19] }}</span>
+                            <span class="kind">{{ e.kind }}</span>
+                            <span class="detail">{{ e.detail }}</span>
+                        </li>
+                        {% endfor %}
+                    </ol>
+                </details>
                 {% endif %}
             </div>
             {% endfor %}

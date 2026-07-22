@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini Ground Station — Přelet</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0e1a;
+            color: #c8d8e8;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        header {
+            display: flex;
+            align-items: baseline;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            color: #4fc3f7;
+            font-size: 1.3rem;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+
+        nav a {
+            color: #546e7a;
+            text-decoration: none;
+            font-size: 0.8rem;
+            letter-spacing: 1px;
+        }
+
+        nav a:hover, nav a.active { color: #4fc3f7; }
+
+        #panel { max-width: 1020px; }
+
+        .status-row {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+
+        .state {
+            font-size: 0.75rem;
+            letter-spacing: 2px;
+            padding: 0.25rem 0.7rem;
+            border-radius: 3px;
+            background: #1e3a5f;
+            color: #4fc3f7;
+        }
+
+        .state-recording { background: #1b3a2a; color: #81c784; }
+        .state-decoding  { background: #2a2a4a; color: #9fa8da; }
+        .state-error     { background: #3a1a1a; color: #e57373; }
+        .state-offline   { background: #23282f; color: #78909c; }
+
+        .agent { font-size: 0.72rem; }
+        .agent.online  { color: #81c784; }
+        .agent.offline { color: #e57373; }
+        .note { color: #607d8b; font-size: 0.72rem; }
+
+        .pass-head {
+            background: #0f1624;
+            border: 1px solid #1e3a5f;
+            border-radius: 4px;
+            padding: 0.9rem 1.2rem;
+            margin-bottom: 1.2rem;
+        }
+
+        .pass-head .sat { color: #4fc3f7; font-size: 1.1rem; font-weight: bold; }
+        .pass-head .times { color: #546e7a; font-size: 0.78rem; margin-top: 0.3rem; line-height: 1.8; }
+        .pass-head .times span { color: #c8d8e8; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 360px 1fr;
+            gap: 1.2rem;
+            align-items: start;
+        }
+
+        @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+
+        .card {
+            background: #0f1624;
+            border: 1px solid #1e3a5f;
+            border-radius: 4px;
+            padding: 1rem 1.2rem;
+        }
+
+        .card-title {
+            color: #546e7a;
+            font-size: 0.72rem;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 0.8rem;
+        }
+
+        .snr-title { margin-top: 1.6rem; }
+
+        .sky { width: 100%; height: auto; display: block; }
+        .sky .rim  { fill: #0a0e1a; stroke: #1e3a5f; stroke-width: 1; }
+        .sky .ring { fill: none; stroke: #16283f; stroke-width: 1; }
+        .sky .cross { stroke: #16283f; stroke-width: 1; }
+        .sky .ring-label, .sky .compass { fill: #37474f; font-size: 10px; font-family: 'Courier New', monospace; }
+        .sky .arc { fill: none; stroke: #4fc3f7; stroke-width: 2; opacity: 0.9; }
+        .sky .marker.aos { fill: #81c784; }
+        .sky .marker.tca { fill: #ffb74d; }
+        .sky .marker.los { fill: #e57373; }
+        .sky .live-dot { fill: #fff; stroke: #4fc3f7; stroke-width: 2; }
+
+        .legend {
+            display: flex;
+            gap: 0.9rem;
+            flex-wrap: wrap;
+            margin-top: 0.7rem;
+            font-size: 0.7rem;
+            color: #546e7a;
+        }
+
+        .legend .aos { color: #81c784; }
+        .legend .tca { color: #ffb74d; }
+        .legend .los { color: #e57373; }
+        .legend .live { color: #c8d8e8; }
+
+        .bar {
+            height: 10px;
+            background: #16283f;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+
+        .bar .fill { height: 100%; background: #4fc3f7; transition: width 0.4s linear; }
+        .bar-meta { color: #546e7a; font-size: 0.72rem; margin-top: 0.5rem; }
+        .bar-meta .now { color: #81c784; }
+
+        .snr { width: 100%; height: auto; display: block; }
+        .snr polyline { fill: none; stroke: #4fc3f7; stroke-width: 1.5; }
+        .snr .axis { stroke: #1e3a5f; stroke-width: 1; }
+        .snr .tick { fill: #546e7a; font-size: 10px; font-family: 'Courier New', monospace; }
+
+        .empty { color: #37474f; font-size: 0.78rem; padding: 0.6rem 0; }
+        .footer { color: #37474f; font-size: 0.7rem; margin-top: 1.2rem; }
+
+        .grid + .grid, .card + .grid, .grid + .card { margin-top: 1.2rem; }
+
+        /* The answer to "did we get it?", where you were already looking. */
+        .result .result-head { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
+        .result .sat { color: #4fc3f7; font-size: 1rem; font-weight: bold; }
+        .result .when { color: #546e7a; font-size: 0.75rem; }
+
+        .badge {
+            font-size: 0.7rem;
+            padding: 0.12rem 0.45rem;
+            border-radius: 3px;
+            background: #1e3a5f;
+            color: #4fc3f7;
+        }
+
+        .badge.q-ok       { background: #1b3a2a; color: #81c784; }
+        .badge.q-degraded { background: #3a2a1a; color: #ffb74d; }
+        .badge.q-lost     { background: #3a1a1a; color: #e57373; }
+
+        .result-body { display: flex; align-items: center; gap: 1.6rem; flex-wrap: wrap; margin-top: 0.7rem; }
+        .result-body .stat { color: #546e7a; font-size: 0.75rem; }
+        .result-body .stat b { color: #c8d8e8; font-weight: normal; font-size: 0.95rem; }
+        .result-body .stat b.good { color: #81c784; }
+        .result-body .stat b.bad { color: #ffb74d; }
+        .result-body .thumb img { max-height: 90px; border-radius: 3px; display: block; }
+        .result-notes { color: #607d8b; font-size: 0.72rem; margin-top: 0.6rem; }
+
+        /* What we will and will not catch — a single dish cannot be in two
+           places at once, and that is worth knowing before the evening. */
+        .queue { list-style: none; display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.75rem; }
+        .queue li { display: flex; gap: 0.7rem; align-items: baseline; flex-wrap: wrap; }
+        .queue .t { color: #c8d8e8; min-width: 3.2rem; }
+        .queue .sat { color: #4fc3f7; min-width: 8rem; }
+        .queue .el { color: #546e7a; min-width: 3rem; text-align: right; }
+        /* On a narrow screen the plan drops onto its own line rather than off
+           the right-hand edge — it is the part worth reading. */
+        .queue .plan { color: #546e7a; flex: 1 1 8rem; }
+        .queue .plan-recording .plan { color: #81c784; }
+        .queue .plan-partial .plan { color: #ffb74d; }
+        .queue .plan-missed { opacity: 0.55; }
+        .queue .plan-missed .plan { color: #e57373; }
+
+        /* Station health — the warnings are the reason this panel exists. */
+        .warnings {
+            list-style: none;
+            margin-bottom: 0.9rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+
+        .warnings li {
+            background: #3a2a1a;
+            border-left: 3px solid #ffb74d;
+            color: #ffcc80;
+            padding: 0.4rem 0.6rem;
+            font-size: 0.74rem;
+            border-radius: 0 3px 3px 0;
+        }
+
+        .all-clear { color: #81c784; font-size: 0.74rem; margin-bottom: 0.9rem; }
+
+        .health { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.75rem; }
+        .health .k { color: #546e7a; display: inline-block; min-width: 7.5rem; }
+        .health .v { color: #c8d8e8; }
+        .health .v.bad { color: #ffb74d; }
+        .health .v.sdr-ok { color: #81c784; }
+        .health .v.sdr-recording { color: #81c784; }
+        .health .v.sdr-missing, .health .v.sdr-busy { color: #e57373; }
+        .health .v.sdr-mock { color: #9fa8da; }
+
+        .timeline { list-style: none; font-size: 0.74rem; display: flex; flex-direction: column; gap: 0.3rem; }
+        .timeline li { display: flex; gap: 0.6rem; align-items: baseline; }
+        .timeline .t { color: #546e7a; min-width: 4.6rem; }
+        .timeline .kind { color: #4fc3f7; min-width: 9.5rem; }
+        .timeline .kind-signal_acquired { color: #81c784; }
+        .timeline .kind-signal_lost, .timeline .kind-error { color: #e57373; }
+        .timeline .kind-decode_finished { color: #aed581; }
+        .timeline .detail { color: #607d8b; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Mini Ground Station</h1>
+        <nav>
+            <a href="/passes">Přelety</a>
+            &nbsp;·&nbsp;
+            <a href="/pass" class="active">Přelet</a>
+            &nbsp;·&nbsp;
+            <a href="/map">Mapa</a>
+            &nbsp;·&nbsp;
+            <a href="/dashboard">Dashboard</a>
+        </nav>
+    </header>
+
+    <div id="panel">
+        {% include "pass_panel.html" %}
+    </div>
+
+    <script>
+    // Poll the server-rendered fragment; the agent pushes its state to the app,
+    // the browser just reads it (the agent is behind NAT).
+    async function refresh() {
+        try {
+            const resp = await fetch('/pass/panel', {headers: {'X-Requested-With': 'poll'}});
+            if (resp.ok) document.getElementById('panel').innerHTML = await resp.text();
+        } catch (e) {
+            /* transient network error — the next tick tries again */
+        }
+    }
+    setInterval(refresh, 5000);
+    </script>
+</body>
+</html>

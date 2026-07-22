@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +33,9 @@ PAGE_SIZE = 10
 # can never be classed "lost", only "ok" or "degraded".
 QUALITY_OK_DB = 10.0
 QUALITY_DEGRADED_DB = 3.0
+# Telemetry is judged on the packet error rate instead: frames either check out
+# or they do not. 5 % is where a pass stops being usable for ephemeris.
+QUALITY_PER_OK = 5.0
 
 
 @router.post("/contacts", status_code=201)
@@ -45,6 +49,9 @@ async def create_contact(
     snr: float = Form(0.0),
     avg_snr: Optional[float] = Form(None),
     notes: Optional[str] = Form(None),
+    contact_type: str = Form("image"),
+    telemetry: Optional[str] = Form(None),
+    events: Optional[str] = Form(None),
     image: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
 ):
@@ -52,6 +59,8 @@ async def create_contact(
 
     aos_dt = _parse_dt(aos, "aos")
     los_dt = _parse_dt(los, "los")
+    telemetry_data = _parse_telemetry(telemetry)
+    events_data = _parse_events(events)
 
     # Idempotency (A4): the agent retries pending contacts, so the same pass may
     # arrive twice. A pass is uniquely identified by (satellite, aos) — if we
@@ -77,9 +86,17 @@ async def create_contact(
         max_elevation=max_elevation,
         snr=snr,
         avg_snr=avg_snr,
-        quality=_classify_quality(snr, has_image=image_filename is not None),
+        quality=_classify_quality(
+            snr,
+            has_image=image_filename is not None,
+            contact_type=contact_type,
+            telemetry=telemetry_data,
+        ),
         notes=notes,
         image_filename=image_filename,
+        contact_type=contact_type,
+        telemetry=telemetry_data,
+        events=events_data,
         created_at=datetime.now(timezone.utc),
     )
     db.add(contact)
@@ -142,12 +159,16 @@ async def export_csv(db: Session = Depends(get_db)):
     writer = csv.writer(buf)
     writer.writerow([
         "id", "satellite", "aos", "los", "duration_s", "max_elevation",
-        "snr", "avg_snr", "quality", "notes", "image_filename", "created_at",
+        "snr", "avg_snr", "quality", "contact_type", "frames", "per",
+        "notes", "image_filename", "created_at",
     ])
     for c in rows:
+        tm = c.telemetry or {}
         writer.writerow([
             c.id, c.satellite, c.aos.isoformat(), c.los.isoformat(),
             c.duration_s, c.max_elevation, c.snr, c.avg_snr, c.quality,
+            c.contact_type or "image",
+            tm.get("packets", ""), tm.get("per", ""),
             c.notes or "", c.image_filename or "",
             c.created_at.isoformat() if c.created_at else "",
         ])
@@ -168,7 +189,55 @@ def _find_existing(db: Session, satellite: str, aos_dt: datetime) -> Optional[Co
     )
 
 
-def _classify_quality(snr: Optional[float], has_image: bool) -> str:
+def _parse_telemetry(raw: Optional[str]) -> Optional[dict]:
+    """Decode the agent's telemetry JSON. Malformed input is a 422, not a 500 (A6)."""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid telemetry JSON")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=422, detail="telemetry must be a JSON object")
+    return data
+
+
+def _parse_events(raw: Optional[str]) -> Optional[list]:
+    """Decode the pass timeline. Like telemetry, bad input is a 422, not a 500."""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid events JSON")
+    if not isinstance(data, list):
+        raise HTTPException(status_code=422, detail="events must be a JSON array")
+    return data
+
+
+def _classify_quality(
+    snr: Optional[float],
+    has_image: bool,
+    contact_type: str = "image",
+    telemetry: Optional[dict] = None,
+) -> str:
+    """
+    Reception quality of a pass.
+
+    For telemetry passes the packet error rate says it directly — frames that
+    pass their checksum are the point, and a clean decode at modest SNR is a
+    good pass, not a degraded one.
+    """
+    if contact_type == "telemetry":
+        stats = telemetry or {}
+        frames = stats.get("packets") or 0
+        per = stats.get("per")
+        if not frames:
+            return "lost"
+        if per is not None and per <= QUALITY_PER_OK:
+            return "ok"
+        return "degraded"
+
     peak = snr or 0.0
     if peak >= QUALITY_OK_DB:
         return "ok"

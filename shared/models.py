@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, Float, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, UniqueConstraint
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -26,6 +26,18 @@ class Contact(Base):
     quality = Column(String, nullable=True)     # ok / degraded / lost (derived)
     notes = Column(String, nullable=True)       # free text (decode status, errors)
     image_filename = Column(String, nullable=True)   # PNG stored in app/static/images/
+    # What the pass produced. "image" = a picture (Meteor LRPT); "telemetry" =
+    # decoded frames (Orbcomm). Not every satellite sends a picture, and a
+    # telemetry pass with no image is a success, not a failed image pass.
+    contact_type = Column(String, nullable=False, default="image")
+    # Decoder output for telemetry passes: frame counts, PER, packet types and
+    # any ephemeris the satellite reported. Kept as JSON because the shape
+    # differs per decoder and only the dashboard reads it.
+    telemetry = Column(JSON, nullable=True)
+    # Timeline of the pass: AOS, recording start, signal acquired/lost, decode
+    # start and result. Kept so a pass can be reconstructed months later —
+    # every debugging session so far started with "what did the log say?".
+    events = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 

@@ -119,15 +119,13 @@ duplicit, web nešahá na skyfield při každém requestu. **20 passed**, ruff c
 3. [x] `0002_add_ops_columns` — přidá sloupce (guardované), odmaže duplicitní
    přelety, přidá `uq_contact_pass`. Idempotentní.
 4. [x] CI smoke-test: `alembic upgrade head && alembic downgrade base`.
-5. [ ] **Na Renderu**: nastavit Pre-Deploy Command `alembic upgrade head`
-   (nebo prependnout do Start Command). Pak teprve mergovat do `main`.
+5. [x] **Na Renderu**: migrace běží při deployi — vyřešeno **prependnutím do
+   Start Command** (`alembic upgrade head && uvicorn ...`), ne přes Pre-Deploy
+   Command.
 
 **Ověřeno lokálně** proti SQLite kopii starého schématu: 3 řádky (s duplicitou)
 → upgrade → sloupce doplněny, duplicita odmazána (3→2), constraint přidán;
 idempotence, čerstvá DB i downgrade OK. Detaily v `alembic/README`.
-
-**Zbývá jediný manuální krok (bod 5):** nastavit na Renderu, ať migrace běží
-při deployi — pak je merge do `main` bezpečný.
 
 ## Iterace 4b — FUNCUBE-1 / AO-73 telemetrie (z PLAN.md)
 *Cíl: skutečná CubeSat telemetrie. ~3+ večery, nejtěžší část.*
@@ -162,8 +160,11 @@ poloha z DB), reálná IP detekce na zařízení. Přesnost IP geolokace je ~km,
 což pro predikce bohatě stačí (footprint NOAA ~3000 km). Pozor na VPN —
 pak `OBSERVER_MODE=manual`.
 
-## Iterace P — Prezentace / portfolio finish
+## Iterace P — Prezentace / portfolio finish ⏸️ ODLOŽENO NA NEURČITO (2026-07-22)
 *Cíl: projekt se dá ukázat u pohovoru. ~1 večer.*
+
+**Odloženo na neurčito.** Nemá termín ani pořadí, dělá se až se rozhodne, že je
+čas. Body zůstávají sepsané, aby se k nim dalo vrátit.
 
 1. [ ] `README.md`: co to je, architektura (diagram z CLAUDE.md),
    screenshoty mapy + dashboardu + dekódovaný snímek, live demo link,
@@ -184,12 +185,12 @@ informaci, na které stojí Meteor (OQPSK) i Orbcomm (SDPSK). `decoder.py` volá
 přelet v reálném čase, dekódování ne. Ověřeno 22. 7.: realtime Orbcomm dekodér
 selhal, ale z uloženého IQ jsme dekódovali s PER 0,0 %.
 
-### M2.1 — IQ recorder
-- [ ] `recorder.py` ukládá surové IQ (`cs16`), ne demodulované audio
-- [ ] **Bias tee zapnout** — změřeno +14 dB; bez toho je LNA útlum
-- [ ] Manuální gain z env (`SDR_GAIN`), ne AGC
-- [ ] Vzorkovací frekvence per satelit: Meteor 1 MHz, Orbcomm 1,2288 MHz
-- [ ] Callback po každém chunku (pro M3 — progress a SNR)
+### M2.1 — IQ recorder ✅ HOTOVO 2026-07-22
+- [x] `recorder.py` ukládá surové IQ (`cs16`), ne demodulované audio
+- [x] **Bias tee zapnout** — změřeno +14 dB; bez toho je LNA útlum
+- [x] Manuální gain z env (`SDR_GAIN`), ne AGC
+- [x] Vzorkovací frekvence per satelit: Meteor 1 MHz, Orbcomm 1,2288 MHz
+- [x] Callback po každém chunku (pro M3 — progress a SNR)
 
 > **Akceptační kritéria M2.1**
 > 1. Nahrávka 10min přeletu vznikne jako `.cs16` a jde ji beze změny předat
@@ -198,11 +199,32 @@ selhal, ale z uloženého IQ jsme dekódovali s PER 0,0 %.
 > 3. Log obsahuje potvrzení, že bias tee je zapnutý.
 > 4. Callback je volán ≥1×/s a dostane elapsed, total a naměřený SNR.
 
-### M2.2 — Dekódovací dispatcher
-- [ ] `decoder.py` = rozcestník podle satelitu (subprocess, jako dnes `noaa-apt`)
-- [ ] Meteor → `satdump meteor_m2-x_lrpt` (pozor: spouštět z `Resources` složky)
-- [ ] Orbcomm → `file_decoder.py`
-- [ ] Neúspěch dekódování nesmí shodit agenta ani smazat IQ
+**Výstup:** `record_iq()` vrací `Recording` (cesta, pass adresář, sample rate,
+SNR profil). Jeden adresář na přelet: `recordings/<pass>/<pass>.cs16` +
+`meta.json` + `products/`. 62 testů, ruff clean.
+
+**Poznámky k realizaci:**
+- Zápis je **streamovaný** — 3 GB se do RAM nevejde. Čte se `read_bytes()`
+  a uint8 páry se převádějí rovnou na int16 (`(b-127) << 7`), bez pyrtlsdr
+  float64 mezikroku; při 1,2288 Msps to není kosmetika.
+- **SNR se měří při nahrávání**, ne dodatečně — soubor je na druhý průchod moc
+  velký. Metrika je záměrně signal-agnostická (špička PSD vs. medián), aby
+  fungovala na úzký Orbcomm nosič i široký Meteor. Celý profil
+  (`snr_series`) se ukládá do `meta.json` → hotový vstup pro sparkline v M3.3.
+- `meta.json` nese i **polohu stanice v době nahrávání** (stanice je mobilní,
+  Orbcomm dekodér polohu potřebuje) a je zároveň značkou „tohle napsal agent",
+  podle které se řídí retence.
+- Výchozí `SDR_GAIN` změněn 49.6 → **20.7** (hodnota ověřená s LNA této
+  stanice); AGC teď loguje varování.
+- Ověřeno v mocku: 4 s @ 1,2288 Msps = 19,7 MB → ~3 GB na 10min přelet, přesně
+  jak odhaduje M2.4. **Na reálném hardwaru zatím neověřeno — dongle nebyl
+  připojen** (kritérium 1 a 3 čeká na příští přelet).
+
+### M2.2 — Dekódovací dispatcher ✅ HOTOVO 2026-07-22
+- [x] `decoder.py` = rozcestník podle satelitu (subprocess, jako dnes `noaa-apt`)
+- [x] Meteor → `satdump meteor_m2-x_lrpt` (pozor: spouštět z `Resources` složky)
+- [x] Orbcomm → `file_decoder.py`
+- [x] Neúspěch dekódování nesmí shodit agenta ani smazat IQ
 
 > **Akceptační kritéria M2.2**
 > 1. Meteor nahrávka → PNG produkty v `recordings/<pass>/products/`.
@@ -210,20 +232,67 @@ selhal, ale z uloženého IQ jsme dekódovali s PER 0,0 %.
 > 3. Chybějící/rozbitý dekodér = zalogovaný `notes`, contact se přesto odešle.
 > 4. Test na **reálné nahrávce z 22. 7.** (FM118) dá PER 0,0 % — regresní jistota.
 
-### M2.3 — Datový model pro telemetrii
-- [ ] `Contact.contact_type` (`image` / `telemetry`)
-- [ ] Tabulka/JSON pro dekódovaná data (rámce, PER, sat_id, efemeridy)
-- [ ] Dashboard: u telemetrie zobrazit počty rámců a PER místo náhledu snímku
-- [ ] Alembic migrace
+**Výstup:** `decode(pass_dir)` vrací `DecodeResult` (success, kind, products,
+stats, notes). Kritérium 4 splněno: `tests/test_orbcomm_real.py` na nahrávce
+`1784673817p299` dává **PER 0,0 %, 98 rámců, efemeridy 22,7 km od TLE predikce**.
+80 testů, ruff clean.
+
+**Poznámky k realizaci:**
+- Orbcomm most (`agent/orbcomm.py`) je nejzajímavější kus: `file_decoder.py` je
+  výzkumný skript s kódem na úrovni modulu, matplotlib okny a vstupem ve formátu
+  `.mat` z upstream recorderu. Místo přepisování DSP se most trefí do jeho
+  rozhraní — vybere okno, zapíše `.mat`, spustí skript, rozparsuje stdout.
+- **Výběr okna dělá SNR profil z M2.1.** Dekodér chce 2 s, přelet trvá minuty
+  a rozdíl mezi horizontem a TCA byl 22. 7. rozdíl mezi PER 18 % a 0 %. Bez
+  profilu se bere střed přeletu.
+- `MPLBACKEND=Agg` je to, co dělá skript použitelným bez obsluhy — končí
+  `plt.show()`, což by jinak čekalo na okno donekonečna.
+- Počet rámců se bere z `packets.txt` (jeden hex rámec na řádek), ne z parsování
+  výpisu; parsování hlásilo i řádky preambule jako rámce.
+- **Změna: Orbcomm se ladí na 137,5 MHz**, ne na kanál satelitu. Všechny kanály
+  se pak vejdou do pásma, žádný nesedí na DC špičce a soubor vypadá přesně jako
+  upstream nahrávky, proti kterým je dekodér odladěný.
+- TLE pro pyephem se bere z naší SatNOGS cache (`shared.tle.tle_lines`), ne
+  z vendorovaného `tles/` adresáře, který upstream skript neumí spolehlivě
+  aktualizovat (viz `patches/README.md`).
+- **Meteor cesta je ověřená jen po úroveň příkazové řádky** — satdump
+  `meteor_m2-x_lrpt` proběhl celý na syntetickém šumu a korektně nevyrobil
+  snímek. Reálné Meteor IQ ze 17. 7. se nedochovalo (zůstaly jen produkty),
+  takže skutečný snímek z naší nahrávky čeká na příští přelet.
+
+### M2.3 — Datový model pro telemetrii ✅ HOTOVO 2026-07-22
+- [x] `Contact.contact_type` (`image` / `telemetry`)
+- [x] Tabulka/JSON pro dekódovaná data (rámce, PER, sat_id, efemeridy)
+- [x] Dashboard: u telemetrie zobrazit počty rámců a PER místo náhledu snímku
+- [x] Alembic migrace
 
 > **Akceptační kritéria M2.3**
 > 1. Orbcomm contact se na dashboardu zobrazí smysluplně (ne prázdná karta).
 > 2. CSV export obsahuje i telemetrické kontakty.
 > 3. `alembic upgrade head` projde na kopii produkční DB.
 
-### M2.4 — Retenční politika (NUTNÁ, ne volitelná)
-- [ ] IQ smazat po **úspěšném** dekódování; při selhání ponechat (k ladění)
-- [ ] Strop na celkovou velikost `recordings/` + úklid nejstarších
+**Výstup:** telemetrická karta s rámci, PER, typy paketů a efemeridami
+(souřadnice, výška, rychlost, odchylka od TLE). Ověřeno vizuálně. 95 testů,
+ruff clean.
+
+**Poznámky k realizaci:**
+- **Kvalita se u telemetrie počítá z PER, ne ze SNR.** Čistý dekód při skromném
+  SNR je dobrý přelet, ne degradovaný — rámce buď sedí, nebo ne. Práh
+  `QUALITY_PER_OK=5 %`, nula rámců = `lost`.
+- Dekódovaná data jsou jeden JSON sloupec, ne vlastní tabulka: tvar se liší
+  dekodér od dekodéru a čte to jen dashboard. `sqlalchemy.JSON` funguje na
+  SQLite i Postgresu.
+- Neúspěšně dekódovaný Orbcomm přelet je pořád `contact_type=telemetry` —
+  dashboard pak hlásí „telemetrie nedekódována" místo „snímek nedostupný".
+- Fronta `pending.db` v agentovi umí doplnit chybějící sloupce do existující
+  tabulky (`ALTER TABLE`), takže upgrade agenta neztratí čekající kontakty.
+- **Migrace 0004 ověřena na kopii staré produkční DB** (schéma před 0002, jeden
+  reálný řádek): upgrade z prázdné historie až na head, opakovaný upgrade jako
+  no-op, downgrade o krok zpět bez ztráty řádku, downgrade až na base.
+
+### M2.4 — Retenční politika (NUTNÁ, ne volitelná) ✅ HOTOVO 2026-07-22
+- [x] IQ smazat po **úspěšném** dekódování; při selhání ponechat (k ladění)
+- [x] Strop na celkovou velikost `recordings/` + úklid nejstarších
 
 > **Proč nutná:** ~10 min × 1,2288 MHz × 4 B ≈ **3 GB na přelet**. Při 42
 > přeletech denně je disk pryč za den. Oproti dosavadním 55 MB WAV je to
@@ -233,6 +302,21 @@ selhal, ale z uloženého IQ jsme dekódovali s PER 0,0 %.
 > 1. Po úspěšném dekódování zůstanou produkty, IQ zmizí.
 > 2. Po selhání IQ zůstane a je v logu důvod.
 > 3. `recordings/` nikdy nepřeroste nastavený strop.
+
+**Výstup:** `agent/retention.py` (`after_decode`, `enforce_cap`, `has_room_for`),
+strop `RECORDINGS_MAX_GB` (výchozí 20). Scheduler uklízí **před** přeletem
+i po dekódování.
+
+**Poznámky k realizaci:**
+- Uklízí se **před** nahráváním, ne až po něm: plný disk uprostřed přeletu
+  přelet ztratí a ten se nevrátí.
+- Maže se **jen to, co napsal agent** — pass adresáře s `meta.json`. Ruční
+  nahrávky ze SDR++ a referenční snímky v `recordings/` (dnes 261 MB) zůstávají,
+  i kdyby to znamenalo zůstat nad stropem; v tom případě je v logu varování.
+- Právě nahrávaný přelet je z úklidu vyjmutý (`keep=`), i když je nejstarší.
+- Pravidlo „smaž po úspěšném dekódování" je zapojené, ale naostro se projeví až
+  s dispatcherem v M2.2 — do té doby scheduler hlásí selhání dekódování a IQ
+  drží.
 
 ---
 
@@ -255,10 +339,10 @@ recorder, po každém chunku:
   └ satelit, AOS/LOS        (á 2 s)          poslední stav
 ```
 
-### M3.1 — Live status endpoint
-- [ ] `POST /station/live` (auth stejná jako `/contacts`) — stav agenta
-- [ ] `GET /station/live` — poslední stav + `last_seen`
-- [ ] Heartbeat i mimo přelet (aby šlo poznat „agent žije, jen nenahrává")
+### M3.1 — Live status endpoint ✅ HOTOVO 2026-07-22
+- [x] `POST /station/live` (auth stejná jako `/contacts`) — stav agenta
+- [x] `GET /station/live` — poslední stav + `last_seen`
+- [x] Heartbeat i mimo přelet (aby šlo poznat „agent žije, jen nenahrává")
 
 > **Akceptační kritéria M3.1**
 > 1. Bez tokenu → 401; nevalidní data → 422 (jako `/observer`).
@@ -266,20 +350,45 @@ recorder, po každém chunku:
 > 3. Stav přežije restart appky (jako `station_status`), nebo je čistě
 >    in-memory a po restartu korektně hlásí `offline` — vybrat a otestovat.
 
-### M3.2 — Vizualizace oblohy (polární graf)
-- [ ] Az/el oblouk přeletu ze skyfieldu (krok 30 s), inline SVG
-- [ ] Vyznačit AOS, TCA, LOS a světové strany
-- [ ] Během přeletu živá poloha satelitu na oblouku
+**Rozhodnutí k bodu 3: čistě in-memory.** Stav popisuje, co stanice dělá *teď*;
+po restartu appky je poctivá odpověď „nevím" a další heartbeat je do 10 s.
+Poloha stanice je něco jiného a v DB zůstává. Otestováno (`reset_live()`
+simuluje restart).
+
+**Poznámky k realizaci:**
+- Agent tepe každých 10 s (`_sleep_with_heartbeat` spí po ≤10s kouscích),
+  console hlásí offline po 30 s ticha — tedy tři zmeškané tepy.
+- Při nahrávání jde stav do appky každé 2 s z recorder callbacku z M2.1,
+  zatímco do logu se píše po 30 s. Dva různé rytmy schválně: log se čte potom,
+  konzole se sleduje teď.
+- `post_live()` je fire-and-forget s 5s timeoutem a spolkne všechno. Běží uvnitř
+  nahrávací smyčky a ztracený status update je neviditelný, ztracený kus přeletu ne.
+- Offline stav si drží poslední hlášená pole jako kontext, ale `state` přepíše
+  na `offline` — nikdo se stanicí půl minuty nemluvil, takže tvrdit „nahrává"
+  by byla lež.
+
+### M3.2 — Vizualizace oblohy (polární graf) ✅ HOTOVO 2026-07-22
+- [x] Az/el oblouk přeletu ze skyfieldu (krok 30 s), inline SVG
+- [x] Vyznačit AOS, TCA, LOS a světové strany
+- [x] Během přeletu živá poloha satelitu na oblouku
 
 > **Akceptační kritéria M3.2**
 > 1. Oblouk odpovídá predikci (AOS/LOS azimut sedí s `/passes`).
 > 2. Funguje i mimo přelet — ukazuje **nejbližší** přelet dopředu.
 > 3. Bez hardwaru a bez agenta se stránka vykreslí (jen bez živé polohy).
 
-### M3.3 — Progress a síla signálu
-- [ ] Progress bar (elapsed/total) + aktuální elevace a azimut
-- [ ] **Sparkline SNR v čase**, živě rostoucí
-- [ ] Fázový stav: `čeká` → `nahrává` → `dekóduje` → `hotovo` / `chyba`
+**Poznámky k realizaci:**
+- `shared.tle.pass_track()` vektorizuje celý oblouk do jednoho volání skyfieldu
+  (stejně jako ground track v A3), ne vzorek po vzorku.
+- Zenit je ve středu, obzor na okraji, sever nahoře. Chytlo to při vizuální
+  kontrole chybu: `_polar_xy` cvaká zápornou elevaci na okraj, takže satelit
+  pod obzorem dostával sebevědomou tečku na obloze. Teď se živá tečka kreslí
+  jen při `el >= 0` a legenda říká „satelit ještě pod obzorem (-21°)".
+
+### M3.3 — Progress a síla signálu ✅ HOTOVO 2026-07-22
+- [x] Progress bar (elapsed/total) + aktuální elevace a azimut
+- [x] **Sparkline SNR v čase**, živě rostoucí
+- [x] Fázový stav: `čeká` → `nahrává` → `dekóduje` → `hotovo` / `chyba`
 
 > **Akceptační kritéria M3.3**
 > 1. Během přeletu se progress hýbe a SNR křivka roste k TCA
@@ -287,10 +396,18 @@ recorder, po každém chunku:
 > 2. Po LOS stránka přejde do `dekóduje` a pak na výsledek.
 > 3. Když agent umře uprostřed, UI to do 30 s pozná.
 
-### M3.4 — Event log přeletu ⭐
-- [ ] Časová osa událostí: AOS, start nahrávání, zámek, ztráta zámku, LOS,
+**Výstup:** stránka `/pass` — stavový řádek, hlavička přeletu, polární graf
+oblohy, progress bar a živá SNR křivka. Server renderuje fragment
+`/pass/panel`, prohlížeč ho polluje po 5 s (žádné WebSockety, stejně jako
+zbytek appky). 108 testů, ruff clean. Ověřeno vizuálně na simulovaném přeletu
+(SNR křivka roste k TCA a zase klesá, progress 66 %, agent online).
+
+**Iterace M3 je hotová** (M3.1–M3.5). Zbývají jen návrhy z tabulky níže.
+
+### M3.4 — Event log přeletu ⭐ ✅ HOTOVO 2026-07-22
+- [x] Časová osa událostí: AOS, start nahrávání, zámek, ztráta zámku, LOS,
       start/konec dekódování, výsledek
-- [ ] Uchovat u contactu, zobrazit i zpětně
+- [x] Uchovat u contactu, zobrazit i zpětně
 
 > **Proč:** veškeré ladění 17.–22. 7. bylo „čti log". Mít to v UI je přesně ten
 > operations mindset, který Groundcom chce vidět.
@@ -299,9 +416,22 @@ recorder, po každém chunku:
 > 1. Po přeletu lze z časové osy rekonstruovat, co se dělo a kde to selhalo.
 > 2. Události mají čas a jsou seřazené.
 
-### M3.5 — Stav stanice (health) ⭐⭐
-- [ ] Agent online/offline, SDR připojený, **bias tee**, gain, frekvence, poloha
-- [ ] Varování, když je něco podezřelé (bias tee vypnutý při použití LNA)
+**Výstup:** `agent/events.py` (`PassLog`), `POST /station/event`, sloupec
+`Contact.events` (migrace 0005). Živě na `/pass`, zpětně rozbalovací „Průběh
+přeletu" u contactu na dashboardu.
+
+**Poznámky k realizaci:**
+- **Slovo „zámek" jsem záměrně nepoužil.** Recorder nedemoduluje, takže o žádném
+  zámku nemůže vědět. Místo toho jsou události `signal_acquired` /
+  `signal_lost` odvozené z SNR streamu (práh 8 dB, ztráta až po 20 s ticha),
+  což je to, co stanice opravdu ví.
+- Události se posílají dvakrát: hned jak nastanou (aby je konzole ukázala
+  během přeletu) a celé znovu s contactem (aby šly číst za půl roku).
+  Reportování je best-effort, rozbitá síť nesmí zastavit přelet.
+
+### M3.5 — Stav stanice (health) ⭐⭐ ✅ HOTOVO 2026-07-22
+- [x] Agent online/offline, SDR připojený, **bias tee**, gain, frekvence, poloha
+- [x] Varování, když je něco podezřelé (bias tee vypnutý při použití LNA)
 
 > **Proč tohle považuju za nejcennější přírůstek:** za dva dny nás zdržely
 > přesně tyhle věci — odpojený dongle, SatDump držící zařízení, **nenapájený
@@ -313,16 +443,40 @@ recorder, po každém chunku:
 > 2. Vypnutý bias tee při nakonfigurovaném LNA = viditelné varování.
 > 3. Panel funguje i když žádný přelet neprobíhá.
 
+**Výstup:** `agent/health.py` + panel „Stav stanice" na `/pass`. Varování na:
+mlčící agent, chybějící SDR, **SDR držený jiným procesem**, vypnutý bias tee
+s LNA v cestě, zapnuté AGC, MOCK režim a docházející místo na disku.
+
+**Poznámky k realizaci:**
+- **„busy" je vlastní stav SDR, ne chyba.** Dongle držený SatDumpem vypadá
+  zvenku jako funkční stanice až do chvíle, kdy začne přelet a nahrávání
+  spadne. Přesně tohle nás v červenci stálo přelety.
+- Sonda otevře a hned zavře zařízení, takže **nikdy neběží během nahrávání** —
+  vzala by dongle tomu, kdo ho zrovna potřebuje. Při nahrávání panel hlásí
+  `recording`, jinak se sonduje nejvýš jednou za minutu.
+- Nový env `LNA_PRESENT` (default 1) říká, jestli má smysl varovat na bias tee.
+- Varování počítá server z toho, co agent nahlásil, ne agent sám: pravidla se
+  tak dají měnit bez deploye agenta.
+
 ### Co dál na stránku — návrhy k rozhodnutí
 
 | Prvek | Hodnota | Náklad | Poznámka |
 |---|---|---|---|
-| **Fronta dalších přeletů** | vysoká | nízký | 3–5 dalších + který se bude nahrávat |
+| ~~**Fronta dalších přeletů**~~ ✅ | vysoká | nízký | hotovo 22. 7. — 5 dalších + plán nahrávání |
 | **Doppler: predikce vs. měření** | vysoká | střední | přesně tím jsme 21. 7. dokázali, že jde o satelit |
-| **Výsledek dekódování inline** | vysoká | nízký | rámce, PER, náhled snímku hned po přeletu |
+| ~~**Výsledek dekódování inline**~~ ✅ | vysoká | nízký | hotovo 22. 7. — rámce, PER, náhled snímku |
 | **Spektrum v TCA (statické)** | střední | nízký | jeden snímek místo živého waterfallu |
 | **Ruční ovládání** (arm/skip/record) | střední | **vysoký** | ⚠️ vyžaduje, aby agent **polloval příkazy** — obrácení toku, návrh zvlášť |
 | **Živý waterfall** | střední | vysoký | ~9 MB/25 min; přes 5s polling trhané. **Odložit** |
+
+**Hotovo z tabulky (2026-07-22):**
+- **Fronta přeletů** nesimuluje jen čas, ale i chování scheduleru: stanice má
+  jednu anténu a jedno vlákno, takže přelet, který začne a skončí uvnitř
+  jiného, se **nezařadí do fronty, ale ztratí**. Fronta to říká dopředu
+  („vynechá se, kolize s X" / „jen část"), včetně 2min cooldownu po přeletu.
+  Ověřeno na reálných predikcích: ORBCOMM FM 116 vypadl kvůli FM 108.
+- **Výsledek dekódování** zůstává na konzoli 2 h po přeletu, aby po LOS
+  nezmizela obrazovka přesně ve chvíli, kdy dorazí odpověď.
 
 > ⚠️ **Ruční ovládání je architektonicky jiná liga.** Dnes agent jen tlačí.
 > Aby ho šlo z webu ovládat, musí si chodit pro příkazy (`GET /station/commands`).
@@ -336,11 +490,14 @@ recorder, po každém chunku:
 - SNR degradace alerting (ntfy když klesne pod práh vs. průměr).
 
 ## Doporučené pořadí
-**T → F → 5 → M → L → M2 → M3 → P** (4b a bonusy kdykoli po M2).
+**T → F → 5 → M → L → M2 → M3** — vše hotovo k 2026-07-22.
+**P je odložené na neurčito.**
 
-M2 před M3: nemá smysl vizualizovat pipeline, která ještě neběží. **M2.1 dělat
-spolu s M2.4** — bez retence tě 3 GB/přelet zavalí hned při prvním testu.
-Callback pro M3 přidat rovnou v M2.1, když se recorder stejně přepisuje.
+Zbývá: návrhy z tabulky u M3, iterace 4b (FUNcube) a bonusy — v libovolném
+pořadí. Nad vším visí jedno: **celý IQ pipeline je zatím ověřený jen na
+uložených datech a v mocku.** První přelet s připojeným donglem je důležitější
+než další funkce.
 
-P až nakonec — teď už je do README čím se pochlubit (snímek Meteoru ze 17. 7.,
-waterfall s Dopplerem a dekódované efemeridy z 22. 7.).
+M2 před M3 dávalo smysl: nemá cenu vizualizovat pipeline, která ještě neběží.
+M2.1 spolu s M2.4 taky — bez retence by 3 GB/přelet zavalily disk hned při
+prvním testu.
