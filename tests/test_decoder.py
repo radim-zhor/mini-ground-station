@@ -164,9 +164,26 @@ def test_window_offset_stays_inside_the_recording():
     assert orbcomm.best_window_offset([[500.0, 30.0]], 10.0) == 8.0
 
 
+@pytest.mark.skipif(
+    not orbcomm.is_available(),
+    reason="vendored orbcomm decoder not checked out (gitignored, so absent in CI)",
+)
 def test_satnogs_names_map_to_the_decoder_database():
+    # The mapping is looked up in the decoder's own satellite database, which
+    # also carries the channel frequencies — a bird it does not know cannot be
+    # decoded even if we recorded it.
     assert orbcomm.sat_db_name("ORBCOMM FM 118") == "orbcomm fm118"
     assert orbcomm.sat_db_name("METEOR M2-4") is None
+
+
+def test_satellite_names_resolve_to_nothing_without_the_decoder(tmp_path, monkeypatch):
+    import sys
+
+    monkeypatch.setattr(orbcomm, "RECEIVER_DIR", tmp_path)
+    # sat_db is imported off sys.path, so an earlier test may have cached it.
+    monkeypatch.delitem(sys.modules, "sat_db", raising=False)
+
+    assert orbcomm.sat_db_name("ORBCOMM FM 118") is None
 
 
 def test_parse_output_reads_per_and_ephemeris():
