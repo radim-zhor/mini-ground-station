@@ -29,6 +29,8 @@ ground-station/
 │   ├── scheduler.py   # skyfield pass prediction, triggers recorder
 │   ├── recorder.py    # pyrtlsdr → interleaved int16 IQ (.cs16); mock mode for CI
 │   ├── retention.py   # drops IQ after a successful decode, caps recordings/
+│   ├── events.py      # the pass timeline (AOS, signal, decode, result)
+│   ├── health.py      # SDR/bias tee/gain/disk state for the console
 │   ├── decoder.py     # dispatcher: satdump (Meteor) / file_decoder.py (Orbcomm)
 │   └── orbcomm.py     # bridge from our .cs16 to the vendored Orbcomm decoder
 ├── app/
@@ -50,6 +52,9 @@ ground-station/
   state to `/station/live`, and pages poll the app. The live state is in memory
   (`app/routes/station.py`) — it describes what the station is doing *now*, and
   after a restart "offline" is the honest answer until the next heartbeat.
+- **The station never says "lock".** The recorder does not demodulate, so it
+  cannot know: the timeline reports `signal_acquired` / `signal_lost` derived
+  from the measured SNR, which is what the station actually knows.
 - **Decoding:** always shell out to an existing decoder (SatDump, `noaa-apt`,
   the vendored Orbcomm `file_decoder.py`), never implement DSP by hand.
 - **CubeSat target:** FUNCUBE-1 / AO-73 at 145.935 MHz. Telemetry spec at funcube.org.uk.
@@ -140,5 +145,6 @@ User-facing tutorials live in `docs/`:
 | `SDR_GAIN` | agent | Tuner gain in dB, or `auto` for AGC (default 20.7 — the value verified with this station's LNA) |
 | `SDR_BIAS_TEE` | agent | `0` disables bias-tee power to the LNA (default on) |
 | `RECORDINGS_MAX_GB` | agent | Size cap for `recordings/`; oldest passes are dropped first (default 20) |
+| `LNA_PRESENT` | agent | `0` when no LNA is in the path, so the bias-tee warning stays quiet (default on) |
 | `SATDUMP_BIN` | agent | Path to the satdump CLI (default: `satdump` in PATH, then the macOS .app) |
 | `SATDUMP_METEOR_PIPELINE` | agent | LRPT pipeline (default `meteor_m2-x_lrpt` = 72k; `meteor_m2-x_lrpt_80k` for the 80k mode) |

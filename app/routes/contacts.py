@@ -51,6 +51,7 @@ async def create_contact(
     notes: Optional[str] = Form(None),
     contact_type: str = Form("image"),
     telemetry: Optional[str] = Form(None),
+    events: Optional[str] = Form(None),
     image: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db),
 ):
@@ -59,6 +60,7 @@ async def create_contact(
     aos_dt = _parse_dt(aos, "aos")
     los_dt = _parse_dt(los, "los")
     telemetry_data = _parse_telemetry(telemetry)
+    events_data = _parse_events(events)
 
     # Idempotency (A4): the agent retries pending contacts, so the same pass may
     # arrive twice. A pass is uniquely identified by (satellite, aos) — if we
@@ -94,6 +96,7 @@ async def create_contact(
         image_filename=image_filename,
         contact_type=contact_type,
         telemetry=telemetry_data,
+        events=events_data,
         created_at=datetime.now(timezone.utc),
     )
     db.add(contact)
@@ -196,6 +199,19 @@ def _parse_telemetry(raw: Optional[str]) -> Optional[dict]:
         raise HTTPException(status_code=422, detail="Invalid telemetry JSON")
     if not isinstance(data, dict):
         raise HTTPException(status_code=422, detail="telemetry must be a JSON object")
+    return data
+
+
+def _parse_events(raw: Optional[str]) -> Optional[list]:
+    """Decode the pass timeline. Like telemetry, bad input is a 422, not a 500."""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid events JSON")
+    if not isinstance(data, list):
+        raise HTTPException(status_code=422, detail="events must be a JSON array")
     return data
 
 

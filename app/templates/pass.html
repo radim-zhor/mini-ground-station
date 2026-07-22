@@ -148,6 +148,46 @@
 
         .empty { color: #37474f; font-size: 0.78rem; padding: 0.6rem 0; }
         .footer { color: #37474f; font-size: 0.7rem; margin-top: 1.2rem; }
+
+        .grid + .grid { margin-top: 1.2rem; }
+
+        /* Station health — the warnings are the reason this panel exists. */
+        .warnings {
+            list-style: none;
+            margin-bottom: 0.9rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+
+        .warnings li {
+            background: #3a2a1a;
+            border-left: 3px solid #ffb74d;
+            color: #ffcc80;
+            padding: 0.4rem 0.6rem;
+            font-size: 0.74rem;
+            border-radius: 0 3px 3px 0;
+        }
+
+        .all-clear { color: #81c784; font-size: 0.74rem; margin-bottom: 0.9rem; }
+
+        .health { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.75rem; }
+        .health .k { color: #546e7a; display: inline-block; min-width: 7.5rem; }
+        .health .v { color: #c8d8e8; }
+        .health .v.bad { color: #ffb74d; }
+        .health .v.sdr-ok { color: #81c784; }
+        .health .v.sdr-recording { color: #81c784; }
+        .health .v.sdr-missing, .health .v.sdr-busy { color: #e57373; }
+        .health .v.sdr-mock { color: #9fa8da; }
+
+        .timeline { list-style: none; font-size: 0.74rem; display: flex; flex-direction: column; gap: 0.3rem; }
+        .timeline li { display: flex; gap: 0.6rem; align-items: baseline; }
+        .timeline .t { color: #546e7a; min-width: 4.6rem; }
+        .timeline .kind { color: #4fc3f7; min-width: 9.5rem; }
+        .timeline .kind-signal_acquired { color: #81c784; }
+        .timeline .kind-signal_lost, .timeline .kind-error { color: #e57373; }
+        .timeline .kind-decode_finished { color: #aed581; }
+        .timeline .detail { color: #607d8b; }
     </style>
 </head>
 <body>

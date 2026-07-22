@@ -399,12 +399,12 @@ oblohy, progress bar a živá SNR křivka. Server renderuje fragment
 zbytek appky). 108 testů, ruff clean. Ověřeno vizuálně na simulovaném přeletu
 (SNR křivka roste k TCA a zase klesá, progress 66 %, agent online).
 
-**Zbývá k iteraci M3:** M3.4 (event log přeletu) a M3.5 (stav stanice / health).
+**Iterace M3 je hotová** (M3.1–M3.5). Zbývají jen návrhy z tabulky níže.
 
-### M3.4 — Event log přeletu ⭐
-- [ ] Časová osa událostí: AOS, start nahrávání, zámek, ztráta zámku, LOS,
+### M3.4 — Event log přeletu ⭐ ✅ HOTOVO 2026-07-22
+- [x] Časová osa událostí: AOS, start nahrávání, zámek, ztráta zámku, LOS,
       start/konec dekódování, výsledek
-- [ ] Uchovat u contactu, zobrazit i zpětně
+- [x] Uchovat u contactu, zobrazit i zpětně
 
 > **Proč:** veškeré ladění 17.–22. 7. bylo „čti log". Mít to v UI je přesně ten
 > operations mindset, který Groundcom chce vidět.
@@ -413,9 +413,22 @@ zbytek appky). 108 testů, ruff clean. Ověřeno vizuálně na simulovaném pře
 > 1. Po přeletu lze z časové osy rekonstruovat, co se dělo a kde to selhalo.
 > 2. Události mají čas a jsou seřazené.
 
-### M3.5 — Stav stanice (health) ⭐⭐
-- [ ] Agent online/offline, SDR připojený, **bias tee**, gain, frekvence, poloha
-- [ ] Varování, když je něco podezřelé (bias tee vypnutý při použití LNA)
+**Výstup:** `agent/events.py` (`PassLog`), `POST /station/event`, sloupec
+`Contact.events` (migrace 0005). Živě na `/pass`, zpětně rozbalovací „Průběh
+přeletu" u contactu na dashboardu.
+
+**Poznámky k realizaci:**
+- **Slovo „zámek" jsem záměrně nepoužil.** Recorder nedemoduluje, takže o žádném
+  zámku nemůže vědět. Místo toho jsou události `signal_acquired` /
+  `signal_lost` odvozené z SNR streamu (práh 8 dB, ztráta až po 20 s ticha),
+  což je to, co stanice opravdu ví.
+- Události se posílají dvakrát: hned jak nastanou (aby je konzole ukázala
+  během přeletu) a celé znovu s contactem (aby šly číst za půl roku).
+  Reportování je best-effort, rozbitá síť nesmí zastavit přelet.
+
+### M3.5 — Stav stanice (health) ⭐⭐ ✅ HOTOVO 2026-07-22
+- [x] Agent online/offline, SDR připojený, **bias tee**, gain, frekvence, poloha
+- [x] Varování, když je něco podezřelé (bias tee vypnutý při použití LNA)
 
 > **Proč tohle považuju za nejcennější přírůstek:** za dva dny nás zdržely
 > přesně tyhle věci — odpojený dongle, SatDump držící zařízení, **nenapájený
@@ -426,6 +439,21 @@ zbytek appky). 108 testů, ruff clean. Ověřeno vizuálně na simulovaném pře
 > 1. Odpojení dongle se projeví do 30 s.
 > 2. Vypnutý bias tee při nakonfigurovaném LNA = viditelné varování.
 > 3. Panel funguje i když žádný přelet neprobíhá.
+
+**Výstup:** `agent/health.py` + panel „Stav stanice" na `/pass`. Varování na:
+mlčící agent, chybějící SDR, **SDR držený jiným procesem**, vypnutý bias tee
+s LNA v cestě, zapnuté AGC, MOCK režim a docházející místo na disku.
+
+**Poznámky k realizaci:**
+- **„busy" je vlastní stav SDR, ne chyba.** Dongle držený SatDumpem vypadá
+  zvenku jako funkční stanice až do chvíle, kdy začne přelet a nahrávání
+  spadne. Přesně tohle nás v červenci stálo přelety.
+- Sonda otevře a hned zavře zařízení, takže **nikdy neběží během nahrávání** —
+  vzala by dongle tomu, kdo ho zrovna potřebuje. Při nahrávání panel hlásí
+  `recording`, jinak se sonduje nejvýš jednou za minutu.
+- Nový env `LNA_PRESENT` (default 1) říká, jestli má smysl varovat na bias tee.
+- Varování počítá server z toho, co agent nahlásil, ne agent sám: pravidla se
+  tak dají měnit bez deploye agenta.
 
 ### Co dál na stránku — návrhy k rozhodnutí
 

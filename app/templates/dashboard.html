@@ -228,6 +228,24 @@
         .tele-ephem .k { color: #546e7a; text-transform: uppercase; font-size: 0.68rem; letter-spacing: 1px; margin-right: 0.4rem; }
         .tele-ephem .v { color: #c8d8e8; }
 
+        /* What happened during the pass, months later. */
+        .events { border-top: 1px solid #1e3a5f; padding: 0.6rem 1.2rem; }
+
+        .events summary {
+            color: #546e7a;
+            font-size: 0.72rem;
+            cursor: pointer;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .events summary:hover { color: #4fc3f7; }
+        .events ol { list-style: none; margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.25rem; }
+        .events li { display: flex; gap: 0.6rem; align-items: baseline; font-size: 0.72rem; }
+        .events .t { color: #546e7a; min-width: 4.6rem; }
+        .events .kind { color: #4fc3f7; min-width: 9.5rem; }
+        .events .detail { color: #607d8b; }
+
         .pager {
             display: flex;
             align-items: center;
@@ -375,6 +393,21 @@
                 <div class="no-image">telemetrie nedekódována</div>
                 {% else %}
                 <div class="no-image">snímek nedostupný</div>
+                {% endif %}
+
+                {% if c.events %}
+                <details class="events">
+                    <summary>Průběh přeletu ({{ c.events|length }} událostí)</summary>
+                    <ol>
+                        {% for e in c.events %}
+                        <li>
+                            <span class="t">{{ e.at[11:19] }}</span>
+                            <span class="kind">{{ e.kind }}</span>
+                            <span class="detail">{{ e.detail }}</span>
+                        </li>
+                        {% endfor %}
+                    </ol>
+                </details>
                 {% endif %}
             </div>
             {% endfor %}

@@ -22,9 +22,10 @@ from typing import Optional
 
 import requests
 
-from agent import retention
-from agent.client import post_contact, post_live, post_observer, retry_pending
+from agent import health, retention
+from agent.client import post_contact, post_event, post_live, post_observer, retry_pending
 from agent.decoder import decode
+from agent.events import PassLog
 from agent.location import detect_location
 from agent.recorder import BYTES_PER_SAMPLE, RECORDINGS_DIR, record_iq
 from shared.tle import get_cached_passes, set_observer
@@ -160,7 +161,7 @@ def _refresh_location(force_report: bool = False) -> tuple:
     return lat, lon
 
 
-def _progress_reporter(p):
+def _progress_reporter(p, passlog=None):
     """
     Recorder callback: log progress occasionally, tell the /pass console often.
 
@@ -177,11 +178,16 @@ def _progress_reporter(p):
             log.info("  %s  %3.0f%%  %.0f/%.0f s  SNR %.1f dB",
                      p.satellite, pct, elapsed, total, snr)
 
+        if passlog is not None:
+            # Turns the SNR stream into "we can hear it" / "we lost it" entries.
+            passlog.observe_signal(elapsed, snr)
+
         if elapsed >= state["next_live"]:
             state["next_live"] = elapsed + LIVE_INTERVAL_S
             post_live(
                 state="recording", satellite=p.satellite, aos=p.aos, los=p.los,
                 elapsed_s=round(elapsed, 1), total_s=round(total, 1), snr=snr,
+                health=health.snapshot(recording=True),
             )
 
     return report
@@ -203,6 +209,7 @@ def _sleep_with_heartbeat(seconds: float, state: str, p=None, note: Optional[str
             aos=p.aos if p else None,
             los=p.los if p else None,
             note=note,
+            health=health.snapshot(),
         )
         if remaining <= 0:
             return
@@ -270,6 +277,13 @@ def run() -> None:
         rate = sample_rate_for(nxt.satellite)
         expected_bytes = rate * record_s * BYTES_PER_SAMPLE
 
+        # From here on, everything that happens to this pass is written down.
+        passlog = PassLog(nxt.satellite, nxt.aos, nxt.los, reporter=post_event)
+        passlog.add(
+            "pass_start",
+            f"{freq / 1e6:.4f} MHz, {rate / 1e6:.4f} Msps, max el {nxt.max_elevation:.0f}°",
+        )
+
         # Make room *before* the pass, not after: a full disk mid-recording
         # loses the pass, and the pass does not come back.
         retention.enforce_cap(RECORDINGS_DIR)
@@ -279,17 +293,19 @@ def run() -> None:
             "AOS  %s  %.4f MHz  %.4f Msps  recording %d s to LOS",
             nxt.satellite, freq / 1e6, rate / 1e6, record_s,
         )
+        passlog.add("recording_started", f"{record_s} s to LOS, ~{expected_bytes / 1e9:.1f} GB")
         try:
             rec = record_iq(
                 frequency_hz=freq,
                 duration_s=record_s,
                 satellite=nxt.satellite,
                 sample_rate=rate,
-                progress_cb=_progress_reporter(nxt),
+                progress_cb=_progress_reporter(nxt, passlog),
                 observer=(lat, lon),
             )
         except Exception as e:
             log.exception("Recording failed")
+            passlog.add("error", f"recording failed: {e}")
             post_live(state="error", satellite=nxt.satellite, aos=nxt.aos, los=nxt.los,
                       note=f"recording failed: {e}")
             _sleep_with_heartbeat(120, "idle", note="recovering from a failed recording")
@@ -299,16 +315,27 @@ def run() -> None:
             "LOS  saved %s  SNR avg %.1f / peak %.1f dB",
             rec.path.name, rec.avg_snr, rec.peak_snr,
         )
+        passlog.add(
+            "recording_finished",
+            f"{rec.duration_s:.0f} s, SNR avg {rec.avg_snr:.1f} / peak {rec.peak_snr:.1f} dB",
+        )
 
         # ── Decode ────────────────────────────────────────────────────────────
         # decode() never raises: a failed decode costs us the products, not the
         # pass. On failure the IQ stays on disk for a manual re-run.
+        passlog.add("decode_started", rec.path.name)
         post_live(state="decoding", satellite=nxt.satellite, aos=nxt.aos, los=nxt.los,
-                  note=f"decoding {rec.path.name}")
+                  note=f"decoding {rec.path.name}", health=health.snapshot())
         result = decode(rec.pass_dir)
         log.info("Decode: %s", result.notes)
+        passlog.add("decode_finished" if result.success else "decode_failed", result.notes)
+
         retention.after_decode(rec.pass_dir, result.success, reason=result.notes)
         retention.enforce_cap(RECORDINGS_DIR, keep=rec.pass_dir)
+        passlog.add(
+            "retention",
+            "IQ smazáno po úspěšném dekódování" if result.success else "IQ ponecháno k ladění",
+        )
 
         post_contact(
             satellite=nxt.satellite,
@@ -324,11 +351,13 @@ def run() -> None:
             # should say the telemetry is missing, not that a picture is.
             contact_type=result.kind if result.kind in ("image", "telemetry") else "image",
             telemetry=result.stats if result.kind == "telemetry" and result.stats else None,
+            events=passlog.events,
         )
 
         post_live(
             state="done" if result.success else "error",
             satellite=nxt.satellite, aos=nxt.aos, los=nxt.los, note=result.notes,
+            health=health.snapshot(),
         )
 
         # Wait past LOS before looking for the next pass

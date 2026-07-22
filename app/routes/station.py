@@ -14,6 +14,7 @@ right now, and after an app restart the honest answer is "I don't know" — the
 agent's next heartbeat says more than a stale row would. The station's
 *position* is a different thing and does live in the database.
 """
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -42,8 +43,16 @@ OFFLINE_AFTER_S = 30
 VALID_STATES = {"idle", "waiting", "recording", "decoding", "done", "error"}
 
 SNR_HISTORY = 400  # samples kept per pass (a 15 min pass at 2 s ≈ 450)
+EVENT_HISTORY = 100
 
-_live: dict = {"payload": None, "received_at": None, "snr_series": [], "pass_key": None}
+_live: dict = {
+    "payload": None,
+    "received_at": None,
+    "snr_series": [],
+    "events": [],
+    "health": {},
+    "pass_key": None,
+}
 
 
 # ── Agent feed ────────────────────────────────────────────────────────────────
@@ -59,11 +68,13 @@ async def report_live(
     total_s: Optional[float] = Form(None),
     snr: Optional[float] = Form(None),
     note: Optional[str] = Form(None),
+    health: Optional[str] = Form(None),
 ):
     """Agent reports what it is doing. Called every couple of seconds."""
     require_agent_auth(request)
     if state not in VALID_STATES:
         raise HTTPException(status_code=422, detail=f"Unknown state: {state!r}")
+    health_data = _parse_json_object(health, "health")
 
     payload = {
         "state": state,
@@ -76,18 +87,59 @@ async def report_live(
         "note": note,
     }
 
-    # The SNR curve belongs to one pass; a new pass starts a new curve.
-    key = f"{satellite}@{aos}" if satellite and aos else None
-    if key != _live["pass_key"]:
-        _live["pass_key"] = key
-        _live["snr_series"] = []
+    _start_new_pass_if_needed(satellite, aos)
     if snr is not None and elapsed_s is not None:
         _live["snr_series"].append((round(elapsed_s, 1), round(snr, 1)))
         del _live["snr_series"][:-SNR_HISTORY]
 
+    if health_data:
+        _live["health"] = health_data
     _live["payload"] = payload
     _live["received_at"] = datetime.now(timezone.utc)
     return {"ok": True}
+
+
+@router.post("/station/event")
+async def report_event(
+    request: Request,
+    kind: str = Form(...),
+    detail: str = Form(""),
+    satellite: Optional[str] = Form(None),
+    aos: Optional[str] = Form(None),
+):
+    """One entry in the pass timeline, reported as it happens."""
+    require_agent_auth(request)
+    _start_new_pass_if_needed(satellite, aos)
+
+    _live["events"].append({
+        "at": datetime.now(timezone.utc).isoformat(),
+        "kind": kind,
+        "detail": detail,
+    })
+    del _live["events"][:-EVENT_HISTORY]
+    _live["received_at"] = datetime.now(timezone.utc)
+    return {"ok": True}
+
+
+def _start_new_pass_if_needed(satellite: Optional[str], aos: Optional[str]) -> None:
+    """The SNR curve and the timeline belong to one pass; a new pass clears both."""
+    key = f"{satellite}@{aos}" if satellite and aos else None
+    if key != _live["pass_key"]:
+        _live["pass_key"] = key
+        _live["snr_series"] = []
+        _live["events"] = []
+
+
+def _parse_json_object(raw: Optional[str], field: str) -> Optional[dict]:
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Invalid {field} JSON")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=422, detail=f"{field} must be a JSON object")
+    return data
 
 
 @router.get("/station/live")
@@ -116,7 +168,51 @@ def _live_state() -> dict:
 
 def reset_live() -> None:
     """Drop the live state (used by tests; also what a restart looks like)."""
-    _live.update(payload=None, received_at=None, snr_series=[], pass_key=None)
+    _live.update(payload=None, received_at=None, snr_series=[], events=[],
+                 health={}, pass_key=None)
+
+
+# ── Station health (M3.5) ─────────────────────────────────────────────────────
+
+def station_health(live: dict) -> dict:
+    """
+    The health panel: what the hardware is doing, and what looks wrong.
+
+    The warnings are the point. Each one is a failure that cost us a real pass
+    in July and was invisible until someone read the right terminal.
+    """
+    h = dict(_live["health"])
+    warnings = []
+
+    if not live.get("online"):
+        warnings.append("Agent se neozývá, stanice nenahrává.")
+
+    sdr = h.get("sdr")
+    if sdr == "missing":
+        warnings.append("SDR není připojený.")
+    elif sdr == "busy":
+        warnings.append("SDR drží jiný proces (SatDump?), nahrávání selže.")
+    elif isinstance(sdr, str) and sdr.startswith("error"):
+        warnings.append(f"SDR hlásí chybu: {sdr[7:]}")
+
+    if h.get("lna") and h.get("bias_tee") is False:
+        warnings.append("Bias tee je vypnutý, ale LNA je v cestě: přijde o ~14 dB.")
+
+    if h.get("agc"):
+        warnings.append("Zapnuté AGC: s LNA před tunerem přebuzuje na vysokém přeletu.")
+
+    if h.get("mock"):
+        warnings.append("Agent běží v MOCK režimu, data jsou syntetická.")
+
+    used, cap = h.get("disk_used_gb"), h.get("disk_cap_gb")
+    if used is not None and cap:
+        h["disk_pct"] = round(100 * used / cap, 1)
+        if used >= 0.9 * cap:
+            warnings.append(f"Nahrávky zabírají {used:.1f} z {cap:.1f} GB, úklid je za dveřmi.")
+
+    h["warnings"] = warnings
+    h["known"] = bool(_live["health"])
+    return h
 
 
 # ── The page ──────────────────────────────────────────────────────────────────
@@ -150,6 +246,8 @@ def _pass_context(request: Request) -> dict:
         "live_pos": live_pos,
         "snr_chart": _snr_chart(_live["snr_series"]),
         "progress": _progress(live),
+        "events": list(reversed(_live["events"])),  # newest first
+        "health": station_health(live),
         "now": datetime.now(timezone.utc),
         "tz": _TZ,
     }

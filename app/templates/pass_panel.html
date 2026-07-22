@@ -5,7 +5,7 @@
     <span class="agent online">agent online</span>
     {% else %}
     <span class="agent offline">
-        agent offline{% if live.last_seen_s %} — naposledy před {{ live.last_seen_s|int }} s{% endif %}
+        agent offline{% if live.last_seen_s %}, naposledy před {{ live.last_seen_s|int }} s{% endif %}
     </span>
     {% endif %}
     {% if live.note %}<span class="note">{{ live.note }}</span>{% endif %}
@@ -49,13 +49,13 @@
             <polyline class="arc" points="{{ sky.polyline }}"></polyline>
 
             <circle class="marker aos" cx="{{ sky.aos.xy[0] }}" cy="{{ sky.aos.xy[1] }}" r="4">
-                <title>AOS — azimut {{ sky.aos.az }}°</title>
+                <title>AOS, azimut {{ sky.aos.az }}°</title>
             </circle>
             <circle class="marker tca" cx="{{ sky.tca.xy[0] }}" cy="{{ sky.tca.xy[1] }}" r="4">
-                <title>TCA — elevace {{ sky.tca.el }}°, azimut {{ sky.tca.az }}°</title>
+                <title>TCA, elevace {{ sky.tca.el }}°, azimut {{ sky.tca.az }}°</title>
             </circle>
             <circle class="marker los" cx="{{ sky.los.xy[0] }}" cy="{{ sky.los.xy[1] }}" r="4">
-                <title>LOS — azimut {{ sky.los.az }}°</title>
+                <title>LOS, azimut {{ sky.los.az }}°</title>
             </circle>
 
             {% if sky.live %}
@@ -104,6 +104,63 @@
         </div>
         {% else %}
         <p class="empty">Zatím žádná měření z probíhajícího přeletu.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="grid">
+    <div class="card">
+        <div class="card-title">Stav stanice</div>
+        {% if health.warnings %}
+        <ul class="warnings">
+            {% for w in health.warnings %}
+            <li>{{ w }}</li>
+            {% endfor %}
+        </ul>
+        {% elif health.known %}
+        <div class="all-clear">Vše v pořádku.</div>
+        {% endif %}
+
+        {% if health.known %}
+        <div class="health">
+            <div><span class="k">SDR</span> <span class="v sdr-{{ health.sdr }}">{{ health.sdr }}</span></div>
+            <div><span class="k">Bias tee</span>
+                <span class="v {{ 'bad' if health.lna and not health.bias_tee else '' }}">
+                    {{ 'zapnutý' if health.bias_tee else 'vypnutý' }}
+                </span>
+            </div>
+            <div><span class="k">Gain</span> <span class="v">{{ health.gain }}{{ ' dB' if not health.agc else '' }}</span></div>
+            {% if health.frequency_hz %}
+            <div><span class="k">Frekvence</span> <span class="v">{{ '%.4f MHz' % (health.frequency_hz / 1000000) }}</span></div>
+            {% endif %}
+            {% if health.sample_rate %}
+            <div><span class="k">Vzorkování</span> <span class="v">{{ '%.4f Msps' % (health.sample_rate / 1000000) }}</span></div>
+            {% endif %}
+            {% if health.disk_cap_gb %}
+            <div><span class="k">Nahrávky</span>
+                <span class="v">{{ health.disk_used_gb }} / {{ health.disk_cap_gb }} GB ({{ health.disk_pct }} %)</span>
+            </div>
+            {% endif %}
+        </div>
+        {% else %}
+        <p class="empty">Agent zatím nic nehlásil.</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div class="card-title">Události přeletu</div>
+        {% if events %}
+        <ol class="timeline">
+            {% for e in events %}
+            <li>
+                <span class="t">{{ e.at[11:19] }}</span>
+                <span class="kind kind-{{ e.kind }}">{{ e.kind }}</span>
+                <span class="detail">{{ e.detail }}</span>
+            </li>
+            {% endfor %}
+        </ol>
+        {% else %}
+        <p class="empty">Zatím žádné události.</p>
         {% endif %}
     </div>
 </div>

@@ -34,6 +34,10 @@ class Contact(Base):
     # any ephemeris the satellite reported. Kept as JSON because the shape
     # differs per decoder and only the dashboard reads it.
     telemetry = Column(JSON, nullable=True)
+    # Timeline of the pass: AOS, recording start, signal acquired/lost, decode
+    # start and result. Kept so a pass can be reconstructed months later —
+    # every debugging session so far started with "what did the log say?".
+    events = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
