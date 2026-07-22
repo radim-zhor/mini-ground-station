@@ -259,16 +259,35 @@ stats, notes). Kritérium 4 splněno: `tests/test_orbcomm_real.py` na nahrávce
   snímek. Reálné Meteor IQ ze 17. 7. se nedochovalo (zůstaly jen produkty),
   takže skutečný snímek z naší nahrávky čeká na příští přelet.
 
-### M2.3 — Datový model pro telemetrii
-- [ ] `Contact.contact_type` (`image` / `telemetry`)
-- [ ] Tabulka/JSON pro dekódovaná data (rámce, PER, sat_id, efemeridy)
-- [ ] Dashboard: u telemetrie zobrazit počty rámců a PER místo náhledu snímku
-- [ ] Alembic migrace
+### M2.3 — Datový model pro telemetrii ✅ HOTOVO 2026-07-22
+- [x] `Contact.contact_type` (`image` / `telemetry`)
+- [x] Tabulka/JSON pro dekódovaná data (rámce, PER, sat_id, efemeridy)
+- [x] Dashboard: u telemetrie zobrazit počty rámců a PER místo náhledu snímku
+- [x] Alembic migrace
 
 > **Akceptační kritéria M2.3**
 > 1. Orbcomm contact se na dashboardu zobrazí smysluplně (ne prázdná karta).
 > 2. CSV export obsahuje i telemetrické kontakty.
 > 3. `alembic upgrade head` projde na kopii produkční DB.
+
+**Výstup:** telemetrická karta s rámci, PER, typy paketů a efemeridami
+(souřadnice, výška, rychlost, odchylka od TLE). Ověřeno vizuálně. 95 testů,
+ruff clean.
+
+**Poznámky k realizaci:**
+- **Kvalita se u telemetrie počítá z PER, ne ze SNR.** Čistý dekód při skromném
+  SNR je dobrý přelet, ne degradovaný — rámce buď sedí, nebo ne. Práh
+  `QUALITY_PER_OK=5 %`, nula rámců = `lost`.
+- Dekódovaná data jsou jeden JSON sloupec, ne vlastní tabulka: tvar se liší
+  dekodér od dekodéru a čte to jen dashboard. `sqlalchemy.JSON` funguje na
+  SQLite i Postgresu.
+- Neúspěšně dekódovaný Orbcomm přelet je pořád `contact_type=telemetry` —
+  dashboard pak hlásí „telemetrie nedekódována" místo „snímek nedostupný".
+- Fronta `pending.db` v agentovi umí doplnit chybějící sloupce do existující
+  tabulky (`ALTER TABLE`), takže upgrade agenta neztratí čekající kontakty.
+- **Migrace 0004 ověřena na kopii staré produkční DB** (schéma před 0002, jeden
+  reálný řádek): upgrade z prázdné historie až na head, opakovaný upgrade jako
+  no-op, downgrade o krok zpět bez ztráty řádku, downgrade až na base.
 
 ### M2.4 — Retenční politika (NUTNÁ, ne volitelná) ✅ HOTOVO 2026-07-22
 - [x] IQ smazat po **úspěšném** dekódování; při selhání ponechat (k ladění)

@@ -276,6 +276,10 @@ def run() -> None:
             avg_snr=rec.avg_snr,
             notes=result.notes,
             png_path=result.image,
+            # A failed Orbcomm decode is still a telemetry pass — the dashboard
+            # should say the telemetry is missing, not that a picture is.
+            contact_type=result.kind if result.kind in ("image", "telemetry") else "image",
+            telemetry=result.stats if result.kind == "telemetry" and result.stats else None,
         )
 
         # Wait past LOS before looking for the next pass

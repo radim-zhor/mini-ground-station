@@ -84,6 +84,11 @@ ground-station/
   `OBSERVER_MODE=manual` pins them (e.g. when on VPN).
 - **DB migrations:** Alembic (`alembic upgrade head` runs in the Render Start Command
   before uvicorn). Never rely on `create_all` for schema changes on production.
+- **Not every pass is a picture.** `Contact.contact_type` is `image` (Meteor
+  LRPT) or `telemetry` (Orbcomm frames); the decoder's output lives in the
+  `telemetry` JSON column, because its shape differs per decoder and only the
+  dashboard reads it. Telemetry quality is derived from PER, not SNR — a clean
+  decode at modest SNR is a good pass.
 
 ## Development setup
 
