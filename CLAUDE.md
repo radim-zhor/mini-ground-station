@@ -33,7 +33,7 @@ ground-station/
 │   └── orbcomm.py     # bridge from our .cs16 to the vendored Orbcomm decoder
 ├── app/
 │   ├── main.py        # FastAPI entrypoint
-│   ├── routes/        # /passes, /contacts, /satellite/position, etc.
+│   ├── routes/        # /passes, /pass, /contacts, /satellite/position, etc.
 │   └── templates/     # Jinja2 + HTMX + Leaflet.js
 └── shared/
     ├── tle.py         # TLE fetch (Celestrak) + skyfield wrappers
@@ -44,7 +44,12 @@ ground-station/
 
 - **Astrodynamics:** `skyfield` only — never use `sgp4` directly. It provides `find_events()`, `altaz()`, and all coordinate transforms out of the box.
 - **TLE source:** SatNOGS API (`https://db.satnogs.org/api/tle/`), not Celestrak (their GP API returns 404 as of 2026-03). TLE cached in `.cache/noaa_tle.json`, TTL 12h. NORAD IDs hardcoded in `shared/tle.py` for NOAA 15/18/19.
-- **Live map updates:** HTMX polling (`hx-trigger="every 5s"`), no WebSocket or SSE.
+- **Live map updates:** polling every 5 s, no WebSocket or SSE.
+- **The agent pushes, the browser polls.** The agent is behind NAT, so the app
+  can never ask it anything: it POSTs its position to `/observer` and its live
+  state to `/station/live`, and pages poll the app. The live state is in memory
+  (`app/routes/station.py`) — it describes what the station is doing *now*, and
+  after a restart "offline" is the honest answer until the next heartbeat.
 - **Decoding:** always shell out to an existing decoder (SatDump, `noaa-apt`,
   the vendored Orbcomm `file_decoder.py`), never implement DSP by hand.
 - **CubeSat target:** FUNCUBE-1 / AO-73 at 145.935 MHz. Telemetry spec at funcube.org.uk.

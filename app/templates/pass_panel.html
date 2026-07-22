@@ -1,0 +1,111 @@
+{# Polled every 5 s by /pass — everything that changes lives here. #}
+<div class="status-row">
+    <span class="state state-{{ live.state }}">{{ live.state|upper }}</span>
+    {% if live.online %}
+    <span class="agent online">agent online</span>
+    {% else %}
+    <span class="agent offline">
+        agent offline{% if live.last_seen_s %} — naposledy před {{ live.last_seen_s|int }} s{% endif %}
+    </span>
+    {% endif %}
+    {% if live.note %}<span class="note">{{ live.note }}</span>{% endif %}
+</div>
+
+{% if pass %}
+<div class="pass-head">
+    <div class="sat">{{ pass.satellite }}</div>
+    <div class="times">
+        AOS <span>{{ pass.aos.astimezone(tz).strftime('%H:%M:%S') }}</span>
+        &nbsp;·&nbsp; LOS <span>{{ pass.los.astimezone(tz).strftime('%H:%M:%S') }}</span>
+        &nbsp;·&nbsp; max el <span>{{ pass.max_elevation }}°</span>
+        &nbsp;·&nbsp; délka <span>{{ pass.duration_s // 60 }}:{{ '%02d' % (pass.duration_s % 60) }}</span>
+        {% if pass.minutes_until > 0 %}
+        &nbsp;·&nbsp; za <span>{{ pass.minutes_until }} min</span>
+        {% endif %}
+    </div>
+</div>
+{% else %}
+<p class="empty">Žádný přelet v příštích 24 h.</p>
+{% endif %}
+
+<div class="grid">
+    <div class="card">
+        <div class="card-title">Obloha</div>
+        {% if sky %}
+        <svg viewBox="0 0 {{ sky.size }} {{ sky.size }}" class="sky" role="img"
+             aria-label="Polární graf přeletu: azimut a elevace">
+            <circle class="rim" cx="{{ sky.size / 2 }}" cy="{{ sky.size / 2 }}" r="{{ sky.r }}"></circle>
+            {% for ring in sky.rings %}
+            <circle class="ring" cx="{{ sky.size / 2 }}" cy="{{ sky.size / 2 }}" r="{{ ring.r }}"></circle>
+            <text class="ring-label" x="{{ sky.size / 2 + 3 }}" y="{{ sky.size / 2 - ring.r + 11 }}">{{ ring.label }}</text>
+            {% endfor %}
+            <line class="cross" x1="{{ sky.size / 2 }}" y1="{{ sky.size / 2 - sky.r }}" x2="{{ sky.size / 2 }}" y2="{{ sky.size / 2 + sky.r }}"></line>
+            <line class="cross" x1="{{ sky.size / 2 - sky.r }}" y1="{{ sky.size / 2 }}" x2="{{ sky.size / 2 + sky.r }}" y2="{{ sky.size / 2 }}"></line>
+            <text class="compass" x="{{ sky.size / 2 }}" y="12" text-anchor="middle">N</text>
+            <text class="compass" x="{{ sky.size - 4 }}" y="{{ sky.size / 2 + 4 }}" text-anchor="end">E</text>
+            <text class="compass" x="{{ sky.size / 2 }}" y="{{ sky.size - 3 }}" text-anchor="middle">S</text>
+            <text class="compass" x="4" y="{{ sky.size / 2 + 4 }}">W</text>
+
+            <polyline class="arc" points="{{ sky.polyline }}"></polyline>
+
+            <circle class="marker aos" cx="{{ sky.aos.xy[0] }}" cy="{{ sky.aos.xy[1] }}" r="4">
+                <title>AOS — azimut {{ sky.aos.az }}°</title>
+            </circle>
+            <circle class="marker tca" cx="{{ sky.tca.xy[0] }}" cy="{{ sky.tca.xy[1] }}" r="4">
+                <title>TCA — elevace {{ sky.tca.el }}°, azimut {{ sky.tca.az }}°</title>
+            </circle>
+            <circle class="marker los" cx="{{ sky.los.xy[0] }}" cy="{{ sky.los.xy[1] }}" r="4">
+                <title>LOS — azimut {{ sky.los.az }}°</title>
+            </circle>
+
+            {% if sky.live %}
+            <circle class="live-dot" cx="{{ sky.live[0] }}" cy="{{ sky.live[1] }}" r="6"></circle>
+            {% endif %}
+        </svg>
+        <div class="legend">
+            <span class="k aos">AOS {{ sky.aos.az }}°</span>
+            <span class="k tca">TCA {{ sky.tca.el }}° / {{ sky.tca.az }}°</span>
+            <span class="k los">LOS {{ sky.los.az }}°</span>
+            {% if live_pos and live_pos.el >= 0 %}
+            <span class="k live">teď el {{ live_pos.el }}° az {{ live_pos.az }}° · {{ live_pos.range_km|int }} km</span>
+            {% elif live_pos %}
+            <span class="k">satelit ještě pod obzorem ({{ live_pos.el }}°)</span>
+            {% endif %}
+        </div>
+        {% else %}
+        <p class="empty">Bez predikce není co kreslit.</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div class="card-title">Průběh</div>
+        {% if progress %}
+        <div class="bar"><div class="fill" style="width: {{ progress.pct }}%"></div></div>
+        <div class="bar-meta">
+            {{ progress.pct }}% &nbsp;·&nbsp; {{ progress.elapsed_s }} / {{ progress.total_s }} s
+            &nbsp;·&nbsp; zbývá {{ progress.remaining_s }} s
+        </div>
+        {% else %}
+        <p class="empty">Nenahrává se.</p>
+        {% endif %}
+
+        <div class="card-title snr-title">SNR</div>
+        {% if snr_chart %}
+        <svg viewBox="0 0 {{ snr_chart.width }} {{ snr_chart.height }}" class="snr" preserveAspectRatio="none"
+             role="img" aria-label="Průběh SNR během přeletu">
+            <line class="axis" x1="22" y1="{{ snr_chart.height - 22 }}" x2="{{ snr_chart.width - 22 }}" y2="{{ snr_chart.height - 22 }}"></line>
+            <text class="tick" x="2" y="24">{{ snr_chart.hi }}</text>
+            <text class="tick" x="2" y="{{ snr_chart.height - 22 }}">{{ snr_chart.lo }}</text>
+            <polyline points="{{ snr_chart.polyline }}"></polyline>
+        </svg>
+        <div class="bar-meta">
+            aktuálně <span class="now">{{ snr_chart.last }} dB</span>
+            &nbsp;·&nbsp; {{ snr_chart.points }} vzorků &nbsp;·&nbsp; max {{ snr_chart.hi }} dB
+        </div>
+        {% else %}
+        <p class="empty">Zatím žádná měření z probíhajícího přeletu.</p>
+        {% endif %}
+    </div>
+</div>
+
+<p class="footer">{{ now.strftime('%H:%M:%S') }} UTC · obnovuje se každých 5 s</p>

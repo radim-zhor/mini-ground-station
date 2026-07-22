@@ -18,11 +18,12 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
+from typing import Optional
 
 import requests
 
 from agent import retention
-from agent.client import post_contact, post_observer, retry_pending
+from agent.client import post_contact, post_live, post_observer, retry_pending
 from agent.decoder import decode
 from agent.location import detect_location
 from agent.recorder import BYTES_PER_SAMPLE, RECORDINGS_DIR, record_iq
@@ -87,6 +88,8 @@ POLL_INTERVAL = 30   # seconds between pass-list refreshes
 PRE_AOS_WAKE = 10    # seconds before AOS to stop sleeping and start recording
 NOTIFY_LEAD_S = 600  # send an ntfy alert ~10 min before AOS
 PROGRESS_LOG_S = 30  # how often the recording progress reaches the log
+LIVE_INTERVAL_S = 2  # how often the /pass console hears from us while recording
+HEARTBEAT_S = 10     # ... and while idle, so the console can tell we are alive
 
 
 def sample_rate_for(satellite: str) -> int:
@@ -157,18 +160,55 @@ def _refresh_location(force_report: bool = False) -> tuple:
     return lat, lon
 
 
-def _progress_logger(satellite: str):
-    """Log recording progress every PROGRESS_LOG_S; also the hook M3 will use."""
-    state = {"next": 0.0}
+def _progress_reporter(p):
+    """
+    Recorder callback: log progress occasionally, tell the /pass console often.
+
+    Two different rhythms on purpose — the log is for reading afterwards, the
+    console is for watching now. Both are throttled against the recorder's
+    ~2 Hz callback so neither the log nor the network gets flooded.
+    """
+    state = {"next_log": 0.0, "next_live": 0.0}
 
     def report(elapsed: float, total: float, snr: float) -> None:
-        if elapsed < state["next"]:
-            return
-        state["next"] = elapsed + PROGRESS_LOG_S
-        pct = 100 * elapsed / total if total else 0
-        log.info("  %s  %3.0f%%  %.0f/%.0f s  SNR %.1f dB", satellite, pct, elapsed, total, snr)
+        if elapsed >= state["next_log"]:
+            state["next_log"] = elapsed + PROGRESS_LOG_S
+            pct = 100 * elapsed / total if total else 0
+            log.info("  %s  %3.0f%%  %.0f/%.0f s  SNR %.1f dB",
+                     p.satellite, pct, elapsed, total, snr)
+
+        if elapsed >= state["next_live"]:
+            state["next_live"] = elapsed + LIVE_INTERVAL_S
+            post_live(
+                state="recording", satellite=p.satellite, aos=p.aos, los=p.los,
+                elapsed_s=round(elapsed, 1), total_s=round(total, 1), snr=snr,
+            )
 
     return report
+
+
+def _sleep_with_heartbeat(seconds: float, state: str, p=None, note: Optional[str] = None) -> None:
+    """
+    Sleep, but keep telling the app we are alive.
+
+    The console calls the station offline after 30 s of silence, and the
+    scheduler otherwise sleeps far longer than that between passes — an idle
+    agent must not look like a dead one.
+    """
+    remaining = max(seconds, 0.0)
+    while True:
+        post_live(
+            state=state,
+            satellite=p.satellite if p else None,
+            aos=p.aos if p else None,
+            los=p.los if p else None,
+            note=note,
+        )
+        if remaining <= 0:
+            return
+        slice_s = min(HEARTBEAT_S, remaining)
+        time.sleep(slice_s)
+        remaining -= slice_s
 
 
 def run() -> None:
@@ -184,7 +224,7 @@ def run() -> None:
 
         if nxt is None:
             log.info("No passes in 24 h — sleeping 1 h")
-            time.sleep(3600)
+            _sleep_with_heartbeat(3600, "idle", note="no passes in 24 h")
             continue
 
         wait_s = int((nxt.aos - datetime.now(timezone.utc)).total_seconds())
@@ -204,16 +244,16 @@ def run() -> None:
 
         if wait_s > POLL_INTERVAL + PRE_AOS_WAKE:
             # Too early — sleep a bit and re-check
-            time.sleep(POLL_INTERVAL)
+            _sleep_with_heartbeat(POLL_INTERVAL, "waiting", nxt)
             continue
 
         # Close to AOS — sleep the remaining seconds
         if wait_s > PRE_AOS_WAKE:
-            time.sleep(wait_s - PRE_AOS_WAKE)
+            _sleep_with_heartbeat(wait_s - PRE_AOS_WAKE, "waiting", nxt)
 
         if nxt.satellite not in FREQUENCIES:
             log.warning("No frequency for %s — skipping", nxt.satellite)
-            time.sleep(60)
+            _sleep_with_heartbeat(60, "idle", note=f"no frequency for {nxt.satellite}")
             continue
         freq = center_freq_for(nxt.satellite)
 
@@ -224,7 +264,7 @@ def run() -> None:
         record_s = int((nxt.los - datetime.now(timezone.utc)).total_seconds())
         if record_s <= 0:
             log.warning("%s LOS already passed — skipping", nxt.satellite)
-            time.sleep(60)
+            _sleep_with_heartbeat(60, "idle", note=f"{nxt.satellite} LOS already passed")
             continue
 
         rate = sample_rate_for(nxt.satellite)
@@ -245,12 +285,14 @@ def run() -> None:
                 duration_s=record_s,
                 satellite=nxt.satellite,
                 sample_rate=rate,
-                progress_cb=_progress_logger(nxt.satellite),
+                progress_cb=_progress_reporter(nxt),
                 observer=(lat, lon),
             )
-        except Exception:
+        except Exception as e:
             log.exception("Recording failed")
-            time.sleep(120)
+            post_live(state="error", satellite=nxt.satellite, aos=nxt.aos, los=nxt.los,
+                      note=f"recording failed: {e}")
+            _sleep_with_heartbeat(120, "idle", note="recovering from a failed recording")
             continue
 
         log.info(
@@ -261,6 +303,8 @@ def run() -> None:
         # ── Decode ────────────────────────────────────────────────────────────
         # decode() never raises: a failed decode costs us the products, not the
         # pass. On failure the IQ stays on disk for a manual re-run.
+        post_live(state="decoding", satellite=nxt.satellite, aos=nxt.aos, los=nxt.los,
+                  note=f"decoding {rec.path.name}")
         result = decode(rec.pass_dir)
         log.info("Decode: %s", result.notes)
         retention.after_decode(rec.pass_dir, result.success, reason=result.notes)
@@ -282,8 +326,13 @@ def run() -> None:
             telemetry=result.stats if result.kind == "telemetry" and result.stats else None,
         )
 
+        post_live(
+            state="done" if result.success else "error",
+            satellite=nxt.satellite, aos=nxt.aos, los=nxt.los, note=result.notes,
+        )
+
         # Wait past LOS before looking for the next pass
-        time.sleep(120)
+        _sleep_with_heartbeat(120, "idle", note=result.notes)
 
 
 if __name__ == "__main__":

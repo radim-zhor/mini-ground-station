@@ -336,10 +336,10 @@ recorder, po každém chunku:
   └ satelit, AOS/LOS        (á 2 s)          poslední stav
 ```
 
-### M3.1 — Live status endpoint
-- [ ] `POST /station/live` (auth stejná jako `/contacts`) — stav agenta
-- [ ] `GET /station/live` — poslední stav + `last_seen`
-- [ ] Heartbeat i mimo přelet (aby šlo poznat „agent žije, jen nenahrává")
+### M3.1 — Live status endpoint ✅ HOTOVO 2026-07-22
+- [x] `POST /station/live` (auth stejná jako `/contacts`) — stav agenta
+- [x] `GET /station/live` — poslední stav + `last_seen`
+- [x] Heartbeat i mimo přelet (aby šlo poznat „agent žije, jen nenahrává")
 
 > **Akceptační kritéria M3.1**
 > 1. Bez tokenu → 401; nevalidní data → 422 (jako `/observer`).
@@ -347,26 +347,59 @@ recorder, po každém chunku:
 > 3. Stav přežije restart appky (jako `station_status`), nebo je čistě
 >    in-memory a po restartu korektně hlásí `offline` — vybrat a otestovat.
 
-### M3.2 — Vizualizace oblohy (polární graf)
-- [ ] Az/el oblouk přeletu ze skyfieldu (krok 30 s), inline SVG
-- [ ] Vyznačit AOS, TCA, LOS a světové strany
-- [ ] Během přeletu živá poloha satelitu na oblouku
+**Rozhodnutí k bodu 3: čistě in-memory.** Stav popisuje, co stanice dělá *teď*;
+po restartu appky je poctivá odpověď „nevím" a další heartbeat je do 10 s.
+Poloha stanice je něco jiného a v DB zůstává. Otestováno (`reset_live()`
+simuluje restart).
+
+**Poznámky k realizaci:**
+- Agent tepe každých 10 s (`_sleep_with_heartbeat` spí po ≤10s kouscích),
+  console hlásí offline po 30 s ticha — tedy tři zmeškané tepy.
+- Při nahrávání jde stav do appky každé 2 s z recorder callbacku z M2.1,
+  zatímco do logu se píše po 30 s. Dva různé rytmy schválně: log se čte potom,
+  konzole se sleduje teď.
+- `post_live()` je fire-and-forget s 5s timeoutem a spolkne všechno. Běží uvnitř
+  nahrávací smyčky a ztracený status update je neviditelný, ztracený kus přeletu ne.
+- Offline stav si drží poslední hlášená pole jako kontext, ale `state` přepíše
+  na `offline` — nikdo se stanicí půl minuty nemluvil, takže tvrdit „nahrává"
+  by byla lež.
+
+### M3.2 — Vizualizace oblohy (polární graf) ✅ HOTOVO 2026-07-22
+- [x] Az/el oblouk přeletu ze skyfieldu (krok 30 s), inline SVG
+- [x] Vyznačit AOS, TCA, LOS a světové strany
+- [x] Během přeletu živá poloha satelitu na oblouku
 
 > **Akceptační kritéria M3.2**
 > 1. Oblouk odpovídá predikci (AOS/LOS azimut sedí s `/passes`).
 > 2. Funguje i mimo přelet — ukazuje **nejbližší** přelet dopředu.
 > 3. Bez hardwaru a bez agenta se stránka vykreslí (jen bez živé polohy).
 
-### M3.3 — Progress a síla signálu
-- [ ] Progress bar (elapsed/total) + aktuální elevace a azimut
-- [ ] **Sparkline SNR v čase**, živě rostoucí
-- [ ] Fázový stav: `čeká` → `nahrává` → `dekóduje` → `hotovo` / `chyba`
+**Poznámky k realizaci:**
+- `shared.tle.pass_track()` vektorizuje celý oblouk do jednoho volání skyfieldu
+  (stejně jako ground track v A3), ne vzorek po vzorku.
+- Zenit je ve středu, obzor na okraji, sever nahoře. Chytlo to při vizuální
+  kontrole chybu: `_polar_xy` cvaká zápornou elevaci na okraj, takže satelit
+  pod obzorem dostával sebevědomou tečku na obloze. Teď se živá tečka kreslí
+  jen při `el >= 0` a legenda říká „satelit ještě pod obzorem (-21°)".
+
+### M3.3 — Progress a síla signálu ✅ HOTOVO 2026-07-22
+- [x] Progress bar (elapsed/total) + aktuální elevace a azimut
+- [x] **Sparkline SNR v čase**, živě rostoucí
+- [x] Fázový stav: `čeká` → `nahrává` → `dekóduje` → `hotovo` / `chyba`
 
 > **Akceptační kritéria M3.3**
 > 1. Během přeletu se progress hýbe a SNR křivka roste k TCA
 >    (ověřitelné proti profilu z 22. 7.: PER 18 % → 0 % → 3 %).
 > 2. Po LOS stránka přejde do `dekóduje` a pak na výsledek.
 > 3. Když agent umře uprostřed, UI to do 30 s pozná.
+
+**Výstup:** stránka `/pass` — stavový řádek, hlavička přeletu, polární graf
+oblohy, progress bar a živá SNR křivka. Server renderuje fragment
+`/pass/panel`, prohlížeč ho polluje po 5 s (žádné WebSockety, stejně jako
+zbytek appky). 108 testů, ruff clean. Ověřeno vizuálně na simulovaném přeletu
+(SNR křivka roste k TCA a zase klesá, progress 66 %, agent online).
+
+**Zbývá k iteraci M3:** M3.4 (event log přeletu) a M3.5 (stav stanice / health).
 
 ### M3.4 — Event log přeletu ⭐
 - [ ] Časová osa událostí: AOS, start nahrávání, zámek, ztráta zámku, LOS,

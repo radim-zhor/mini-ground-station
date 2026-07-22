@@ -102,6 +102,48 @@ def post_observer(lat: float, lon: float, source: str) -> bool:
         return False
 
 
+def post_live(
+    state: str,
+    satellite: Optional[str] = None,
+    aos: Optional[datetime] = None,
+    los: Optional[datetime] = None,
+    elapsed_s: Optional[float] = None,
+    total_s: Optional[float] = None,
+    snr: Optional[float] = None,
+    note: Optional[str] = None,
+) -> bool:
+    """
+    Push the station's current state to the web app (the /pass console).
+
+    Fire and forget: this runs inside the recording loop, so it gets a short
+    timeout and swallows everything. A dropped status update is invisible —
+    a dropped chunk of the pass is not.
+    """
+    data = {"state": state}
+    for key, value in (
+        ("satellite", satellite),
+        ("aos", aos.isoformat() if aos else None),
+        ("los", los.isoformat() if los else None),
+        ("elapsed_s", elapsed_s),
+        ("total_s", total_s),
+        ("snr", snr),
+        ("note", note),
+    ):
+        if value is not None:
+            data[key] = str(value)
+
+    try:
+        requests.post(
+            f"{_API_URL}/station/live",
+            data=data,
+            headers={"Authorization": f"Bearer {_SECRET}"},
+            timeout=5,
+        )
+        return True
+    except Exception:
+        return False
+
+
 def retry_pending() -> None:
     """Retry all pending contacts. Call this at agent startup."""
     if not _PENDING_DB.exists():

@@ -6,9 +6,11 @@ import agent.scheduler as scheduler
 
 
 def _fake_pass():
+    aos = datetime.now(timezone.utc) + timedelta(minutes=9)
     return SimpleNamespace(
         satellite="METEOR M2-4",
-        aos=datetime.now(timezone.utc) + timedelta(minutes=9),
+        aos=aos,
+        los=aos + timedelta(seconds=720),
         max_elevation=62.0,
         duration_s=720,
     )
@@ -69,11 +71,42 @@ def test_every_scheduled_satellite_has_a_capture_rate():
         assert scheduler.sample_rate_for(name) > 0
 
 
-def test_progress_logger_throttles_to_the_log_interval(caplog):
-    report = scheduler._progress_logger("METEOR M2-4")
+def test_progress_reporter_throttles_the_log_and_the_console(caplog, monkeypatch):
+    posted = []
+    monkeypatch.setattr(scheduler, "post_live", lambda **kw: posted.append(kw))
+
+    report = scheduler._progress_reporter(_fake_pass())
     with caplog.at_level("INFO"):
         for elapsed in range(0, 61):  # 61 seconds of 1 Hz updates
             report(float(elapsed), 60.0, 12.3)
 
-    # 0 s, 30 s, 60 s — not 61 lines of noise.
+    # The log is for reading afterwards: 0 s, 30 s, 60 s — not 61 lines.
     assert caplog.text.count("METEOR M2-4") == 3
+    # The console is for watching now, so it hears from us far more often.
+    assert len(posted) == 31
+    assert posted[0]["state"] == "recording"
+    assert posted[-1]["snr"] == 12.3
+
+
+def test_heartbeat_keeps_reporting_while_sleeping(monkeypatch):
+    posted, slept = [], []
+    monkeypatch.setattr(scheduler, "post_live", lambda **kw: posted.append(kw))
+    monkeypatch.setattr(scheduler.time, "sleep", lambda s: slept.append(s))
+
+    scheduler._sleep_with_heartbeat(25, "waiting", _fake_pass())
+
+    # 25 s at a 10 s heartbeat: beats at 0, 10, 20 and once more at the end.
+    assert sum(slept) == 25
+    assert len(posted) == 4
+    assert all(p["state"] == "waiting" for p in posted)
+
+
+def test_heartbeat_reports_even_when_not_sleeping(monkeypatch):
+    posted = []
+    monkeypatch.setattr(scheduler, "post_live", lambda **kw: posted.append(kw))
+    monkeypatch.setattr(scheduler.time, "sleep", lambda s: None)
+
+    scheduler._sleep_with_heartbeat(0, "idle", note="no passes in 24 h")
+
+    assert len(posted) == 1
+    assert posted[0]["note"] == "no passes in 24 h"

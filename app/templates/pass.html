@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini Ground Station — Přelet</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0e1a;
+            color: #c8d8e8;
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        header {
+            display: flex;
+            align-items: baseline;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            color: #4fc3f7;
+            font-size: 1.3rem;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+
+        nav a {
+            color: #546e7a;
+            text-decoration: none;
+            font-size: 0.8rem;
+            letter-spacing: 1px;
+        }
+
+        nav a:hover, nav a.active { color: #4fc3f7; }
+
+        #panel { max-width: 1020px; }
+
+        .status-row {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+
+        .state {
+            font-size: 0.75rem;
+            letter-spacing: 2px;
+            padding: 0.25rem 0.7rem;
+            border-radius: 3px;
+            background: #1e3a5f;
+            color: #4fc3f7;
+        }
+
+        .state-recording { background: #1b3a2a; color: #81c784; }
+        .state-decoding  { background: #2a2a4a; color: #9fa8da; }
+        .state-error     { background: #3a1a1a; color: #e57373; }
+        .state-offline   { background: #23282f; color: #78909c; }
+
+        .agent { font-size: 0.72rem; }
+        .agent.online  { color: #81c784; }
+        .agent.offline { color: #e57373; }
+        .note { color: #607d8b; font-size: 0.72rem; }
+
+        .pass-head {
+            background: #0f1624;
+            border: 1px solid #1e3a5f;
+            border-radius: 4px;
+            padding: 0.9rem 1.2rem;
+            margin-bottom: 1.2rem;
+        }
+
+        .pass-head .sat { color: #4fc3f7; font-size: 1.1rem; font-weight: bold; }
+        .pass-head .times { color: #546e7a; font-size: 0.78rem; margin-top: 0.3rem; line-height: 1.8; }
+        .pass-head .times span { color: #c8d8e8; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 360px 1fr;
+            gap: 1.2rem;
+            align-items: start;
+        }
+
+        @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+
+        .card {
+            background: #0f1624;
+            border: 1px solid #1e3a5f;
+            border-radius: 4px;
+            padding: 1rem 1.2rem;
+        }
+
+        .card-title {
+            color: #546e7a;
+            font-size: 0.72rem;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 0.8rem;
+        }
+
+        .snr-title { margin-top: 1.6rem; }
+
+        .sky { width: 100%; height: auto; display: block; }
+        .sky .rim  { fill: #0a0e1a; stroke: #1e3a5f; stroke-width: 1; }
+        .sky .ring { fill: none; stroke: #16283f; stroke-width: 1; }
+        .sky .cross { stroke: #16283f; stroke-width: 1; }
+        .sky .ring-label, .sky .compass { fill: #37474f; font-size: 10px; font-family: 'Courier New', monospace; }
+        .sky .arc { fill: none; stroke: #4fc3f7; stroke-width: 2; opacity: 0.9; }
+        .sky .marker.aos { fill: #81c784; }
+        .sky .marker.tca { fill: #ffb74d; }
+        .sky .marker.los { fill: #e57373; }
+        .sky .live-dot { fill: #fff; stroke: #4fc3f7; stroke-width: 2; }
+
+        .legend {
+            display: flex;
+            gap: 0.9rem;
+            flex-wrap: wrap;
+            margin-top: 0.7rem;
+            font-size: 0.7rem;
+            color: #546e7a;
+        }
+
+        .legend .aos { color: #81c784; }
+        .legend .tca { color: #ffb74d; }
+        .legend .los { color: #e57373; }
+        .legend .live { color: #c8d8e8; }
+
+        .bar {
+            height: 10px;
+            background: #16283f;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+
+        .bar .fill { height: 100%; background: #4fc3f7; transition: width 0.4s linear; }
+        .bar-meta { color: #546e7a; font-size: 0.72rem; margin-top: 0.5rem; }
+        .bar-meta .now { color: #81c784; }
+
+        .snr { width: 100%; height: auto; display: block; }
+        .snr polyline { fill: none; stroke: #4fc3f7; stroke-width: 1.5; }
+        .snr .axis { stroke: #1e3a5f; stroke-width: 1; }
+        .snr .tick { fill: #546e7a; font-size: 10px; font-family: 'Courier New', monospace; }
+
+        .empty { color: #37474f; font-size: 0.78rem; padding: 0.6rem 0; }
+        .footer { color: #37474f; font-size: 0.7rem; margin-top: 1.2rem; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Mini Ground Station</h1>
+        <nav>
+            <a href="/passes">Přelety</a>
+            &nbsp;·&nbsp;
+            <a href="/pass" class="active">Přelet</a>
+            &nbsp;·&nbsp;
+            <a href="/map">Mapa</a>
+            &nbsp;·&nbsp;
+            <a href="/dashboard">Dashboard</a>
+        </nav>
+    </header>
+
+    <div id="panel">
+        {% include "pass_panel.html" %}
+    </div>
+
+    <script>
+    // Poll the server-rendered fragment; the agent pushes its state to the app,
+    // the browser just reads it (the agent is behind NAT).
+    async function refresh() {
+        try {
+            const resp = await fetch('/pass/panel', {headers: {'X-Requested-With': 'poll'}});
+            if (resp.ok) document.getElementById('panel').innerHTML = await resp.text();
+        } catch (e) {
+            /* transient network error — the next tick tries again */
+        }
+    }
+    setInterval(refresh, 5000);
+    </script>
+</body>
+</html>

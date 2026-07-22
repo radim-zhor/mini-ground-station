@@ -3,7 +3,7 @@ import math
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -227,6 +227,47 @@ def get_cached_passes() -> list[PassInfo]:
     for p in passes:
         p.minutes_until = int((p.aos - now_dt).total_seconds() / 60)
     return passes
+
+
+def pass_track(satellite: str, aos: datetime, los: datetime, step_s: int = 30) -> list[dict]:
+    """
+    Az/el of a satellite through one pass, sampled every ``step_s`` seconds.
+
+    This is what the sky plot on /pass draws. Vectorised like the ground track
+    (A3): one skyfield evaluation for the whole arc, not one per sample.
+    Returns [] when the satellite is unknown or the window is empty.
+    """
+    sat = next((s for s in load_satellites() if s.name == satellite), None)
+    if sat is None or los <= aos:
+        return []
+
+    total_s = (los - aos).total_seconds()
+    steps = max(int(total_s // step_s), 1)
+    offsets = np.arange(steps + 1) * (total_s / steps)
+    t = ts.tt_jd(ts.from_datetime(aos).tt + offsets / 86400.0)
+
+    alt, az, _ = (sat - observer_location()).at(t).altaz()
+    return [
+        {
+            "t": aos + timedelta(seconds=float(o)),
+            "az": round(float(a), 1),
+            "el": round(float(e), 1),
+        }
+        for o, a, e in zip(offsets, az.degrees, alt.degrees)
+    ]
+
+
+def current_azel(satellite: str) -> Optional[dict]:
+    """Where the satellite is right now, as seen from the station."""
+    sat = next((s for s in load_satellites() if s.name == satellite), None)
+    if sat is None:
+        return None
+    alt, az, distance = (sat - observer_location()).at(ts.now()).altaz()
+    return {
+        "az": round(float(az.degrees), 1),
+        "el": round(float(alt.degrees), 1),
+        "range_km": round(float(distance.km), 1),
+    }
 
 
 def current_positions(observer_latlon: Optional[tuple] = None) -> list[SatPosition]:

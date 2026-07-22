@@ -9,7 +9,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.database import init_db
-from app.routes import contacts, map, passes
+from app.routes import contacts, map, passes, station
 
 app = FastAPI(title="Mini Ground Station")
 
@@ -28,6 +28,7 @@ app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 app.include_router(passes.router)
 app.include_router(map.router)
 app.include_router(contacts.router)
+app.include_router(station.router)
 
 
 @app.get("/", include_in_schema=False)
