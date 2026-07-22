@@ -184,12 +184,12 @@ informaci, na které stojí Meteor (OQPSK) i Orbcomm (SDPSK). `decoder.py` volá
 přelet v reálném čase, dekódování ne. Ověřeno 22. 7.: realtime Orbcomm dekodér
 selhal, ale z uloženého IQ jsme dekódovali s PER 0,0 %.
 
-### M2.1 — IQ recorder
-- [ ] `recorder.py` ukládá surové IQ (`cs16`), ne demodulované audio
-- [ ] **Bias tee zapnout** — změřeno +14 dB; bez toho je LNA útlum
-- [ ] Manuální gain z env (`SDR_GAIN`), ne AGC
-- [ ] Vzorkovací frekvence per satelit: Meteor 1 MHz, Orbcomm 1,2288 MHz
-- [ ] Callback po každém chunku (pro M3 — progress a SNR)
+### M2.1 — IQ recorder ✅ HOTOVO 2026-07-22
+- [x] `recorder.py` ukládá surové IQ (`cs16`), ne demodulované audio
+- [x] **Bias tee zapnout** — změřeno +14 dB; bez toho je LNA útlum
+- [x] Manuální gain z env (`SDR_GAIN`), ne AGC
+- [x] Vzorkovací frekvence per satelit: Meteor 1 MHz, Orbcomm 1,2288 MHz
+- [x] Callback po každém chunku (pro M3 — progress a SNR)
 
 > **Akceptační kritéria M2.1**
 > 1. Nahrávka 10min přeletu vznikne jako `.cs16` a jde ji beze změny předat
@@ -197,6 +197,27 @@ selhal, ale z uloženého IQ jsme dekódovali s PER 0,0 %.
 > 2. V mock režimu (`MOCK=1`) vznikne syntetické IQ bez hardwaru; testy projdou.
 > 3. Log obsahuje potvrzení, že bias tee je zapnutý.
 > 4. Callback je volán ≥1×/s a dostane elapsed, total a naměřený SNR.
+
+**Výstup:** `record_iq()` vrací `Recording` (cesta, pass adresář, sample rate,
+SNR profil). Jeden adresář na přelet: `recordings/<pass>/<pass>.cs16` +
+`meta.json` + `products/`. 62 testů, ruff clean.
+
+**Poznámky k realizaci:**
+- Zápis je **streamovaný** — 3 GB se do RAM nevejde. Čte se `read_bytes()`
+  a uint8 páry se převádějí rovnou na int16 (`(b-127) << 7`), bez pyrtlsdr
+  float64 mezikroku; při 1,2288 Msps to není kosmetika.
+- **SNR se měří při nahrávání**, ne dodatečně — soubor je na druhý průchod moc
+  velký. Metrika je záměrně signal-agnostická (špička PSD vs. medián), aby
+  fungovala na úzký Orbcomm nosič i široký Meteor. Celý profil
+  (`snr_series`) se ukládá do `meta.json` → hotový vstup pro sparkline v M3.3.
+- `meta.json` nese i **polohu stanice v době nahrávání** (stanice je mobilní,
+  Orbcomm dekodér polohu potřebuje) a je zároveň značkou „tohle napsal agent",
+  podle které se řídí retence.
+- Výchozí `SDR_GAIN` změněn 49.6 → **20.7** (hodnota ověřená s LNA této
+  stanice); AGC teď loguje varování.
+- Ověřeno v mocku: 4 s @ 1,2288 Msps = 19,7 MB → ~3 GB na 10min přelet, přesně
+  jak odhaduje M2.4. **Na reálném hardwaru zatím neověřeno — dongle nebyl
+  připojen** (kritérium 1 a 3 čeká na příští přelet).
 
 ### M2.2 — Dekódovací dispatcher
 - [ ] `decoder.py` = rozcestník podle satelitu (subprocess, jako dnes `noaa-apt`)
@@ -221,9 +242,9 @@ selhal, ale z uloženého IQ jsme dekódovali s PER 0,0 %.
 > 2. CSV export obsahuje i telemetrické kontakty.
 > 3. `alembic upgrade head` projde na kopii produkční DB.
 
-### M2.4 — Retenční politika (NUTNÁ, ne volitelná)
-- [ ] IQ smazat po **úspěšném** dekódování; při selhání ponechat (k ladění)
-- [ ] Strop na celkovou velikost `recordings/` + úklid nejstarších
+### M2.4 — Retenční politika (NUTNÁ, ne volitelná) ✅ HOTOVO 2026-07-22
+- [x] IQ smazat po **úspěšném** dekódování; při selhání ponechat (k ladění)
+- [x] Strop na celkovou velikost `recordings/` + úklid nejstarších
 
 > **Proč nutná:** ~10 min × 1,2288 MHz × 4 B ≈ **3 GB na přelet**. Při 42
 > přeletech denně je disk pryč za den. Oproti dosavadním 55 MB WAV je to
@@ -233,6 +254,21 @@ selhal, ale z uloženého IQ jsme dekódovali s PER 0,0 %.
 > 1. Po úspěšném dekódování zůstanou produkty, IQ zmizí.
 > 2. Po selhání IQ zůstane a je v logu důvod.
 > 3. `recordings/` nikdy nepřeroste nastavený strop.
+
+**Výstup:** `agent/retention.py` (`after_decode`, `enforce_cap`, `has_room_for`),
+strop `RECORDINGS_MAX_GB` (výchozí 20). Scheduler uklízí **před** přeletem
+i po dekódování.
+
+**Poznámky k realizaci:**
+- Uklízí se **před** nahráváním, ne až po něm: plný disk uprostřed přeletu
+  přelet ztratí a ten se nevrátí.
+- Maže se **jen to, co napsal agent** — pass adresáře s `meta.json`. Ruční
+  nahrávky ze SDR++ a referenční snímky v `recordings/` (dnes 261 MB) zůstávají,
+  i kdyby to znamenalo zůstat nad stropem; v tom případě je v logu varování.
+- Právě nahrávaný přelet je z úklidu vyjmutý (`keep=`), i když je nejstarší.
+- Pravidlo „smaž po úspěšném dekódování" je zapojené, ale naostro se projeví až
+  s dispatcherem v M2.2 — do té doby scheduler hlásí selhání dekódování a IQ
+  drží.
 
 ---
 
