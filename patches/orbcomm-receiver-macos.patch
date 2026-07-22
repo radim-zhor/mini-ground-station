@@ -1,0 +1,110 @@
+diff --git a/file_decoder.py b/file_decoder.py
+index a910432..1d588be 100644
+--- a/file_decoder.py
++++ b/file_decoder.py
+@@ -37,7 +37,10 @@ packet_file = r'./packets.txt'
+ 
+ # Where the data files are located
+ data_dir = r'./data/'
+-sample_file = sorted(glob.glob(data_dir + "*.mat"))[0]
++# Allow picking a specific recording; the default (first file) is the start of
++# the pass, i.e. the lowest elevation and worst SNR. Mid-pass is far better.
++import sys as _sys
++sample_file = _sys.argv[1] if len(_sys.argv) > 1 else sorted(glob.glob(data_dir + "*.mat"))[0]
+ 
+ # Load the .mat file and print some of the metadata
+ try:
+diff --git a/realtime_receiver.py b/realtime_receiver.py
+index 8917d97..f324bd1 100644
+--- a/realtime_receiver.py
++++ b/realtime_receiver.py
+@@ -41,6 +41,13 @@ except:
+ import signal
+ from time import time, sleep
+ import multiprocessing as mp
++
++# macOS (Python 3.8+) defaults to "spawn", which re-imports this module in the
++# child. This script's main loop sits at module level with no __main__ guard, so
++# the child would run the main loop instead of process_samples(): nothing ever
++# drains the queue, it fills up, and the SDR callback dies in queue.qsize()
++# (unimplemented on macOS). "fork" keeps the original Linux behaviour.
++mp.set_start_method('fork', force=True)
+ from math import degrees, log10
+ 
+ # Need this to enable ctrl+c to exit the program.
+@@ -79,9 +86,15 @@ c = 299792458.0 # m/s
+ # However, it is a much higher sample rate than would be needed.
+ sample_rate = 1.2288e6
+ center_freq = 137.5e6
+-gain = 'auto' # Use AGC
++# Manual gain, not AGC: this station has an RTL-SDR Blog LNA (18.7 dB) behind a
++# FBP-137s filter (~1.5 dB loss), i.e. ~17 dB net ahead of the tuner. AGC tends
++# to ride that up and overload on a high pass; 20 dB is what worked for Meteor.
++gain = 20.7
+ 
+ sdr = RtlSdr()
++# The LNA is bias-tee powered — without this it is an unpowered attenuator and
++# reception is worse than with no LNA at all. The stock script never sets it.
++sdr.set_bias_tee(True)
+ sdr.rs = sample_rate
+ sdr.gain = gain
+ sdr.fc = center_freq
+@@ -114,8 +127,13 @@ def rtlsdr_callback(samples, context):
+     # This code will catch the case when the user closes the matplotlib figure
+     if queue.full():
+         # empty out the queue so that the threads can join without error
+-        while queue.qsize() > 0:
+-            queue.get()
++        # (qsize() raises NotImplementedError on macOS — sem_getvalue() is not
++        # available there — so drain with empty()/get_nowait() instead)
++        while not queue.empty():
++            try:
++                queue.get_nowait()
++            except Exception:
++                break
+         should_finish = True
+         queue.put((None, None))
+         sdr.cancel_read_async()
+diff --git a/record_orbcomm.py b/record_orbcomm.py
+index c247d8b..133dbc1 100644
+--- a/record_orbcomm.py
++++ b/record_orbcomm.py
+@@ -44,9 +44,15 @@ obs.elevation = alt # Technically is the altitude of observer
+ # Set RTLSDR parameters and initialize
+ sample_rate = 1.2288e6
+ center_freq = 137.5e6
+-gain = 'auto' # Use AGC
++# Manual gain, not AGC: this station has an LNA (18.7 dB) behind a FBP-137s
++# filter, i.e. ~17 dB net ahead of the tuner, and AGC rides that up on a high
++# pass. 20.7 dB is the value verified against Meteor and Orbcomm carriers.
++gain = 20.7
+ 
+ sdr = RtlSdr()
++# The LNA is bias-tee powered; measured +14 dB with this on. Without it the LNA
++# is an unpowered attenuator. The stock script never sets it.
++sdr.set_bias_tee(True)
+ sdr.rs = sample_rate
+ sdr.gain = gain
+ sdr.fc = center_freq
+diff --git a/sat_db.py b/sat_db.py
+index ed6b7d6..8b152c4 100644
+--- a/sat_db.py
++++ b/sat_db.py
+@@ -21,10 +21,13 @@ active_orbcomm_satellites = {
+             # Not enough info to know:
+                 # FM104, FM107, FM106, FM105, FM27, FM29, FM33, FM37, FM36, FM34,
+                 # FM111, FM119, FM115
+-            'orbcomm fm103':{
+-                            'norad_id':40091,
+-                            'frequencies':[137250000.0, 137312500.0]
+-                            },
++            # FM103 (NORAD 40091) dropped 2026-07: no TLE in either Celestrak's
++            # orbcomm group or SatNOGS, and readtle() aborts the whole receiver
++            # on the first satellite it cannot parse.
++            # 'orbcomm fm103':{
++            #                 'norad_id':40091,
++            #                 'frequencies':[137250000.0, 137312500.0]
++            #                 },
+             'orbcomm fm107':{
+                             'norad_id':40087,
+                             'frequencies':[137250000.0, 137312500.0]
