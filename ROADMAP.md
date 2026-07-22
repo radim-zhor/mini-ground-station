@@ -119,15 +119,13 @@ duplicit, web nešahá na skyfield při každém requestu. **20 passed**, ruff c
 3. [x] `0002_add_ops_columns` — přidá sloupce (guardované), odmaže duplicitní
    přelety, přidá `uq_contact_pass`. Idempotentní.
 4. [x] CI smoke-test: `alembic upgrade head && alembic downgrade base`.
-5. [ ] **Na Renderu**: nastavit Pre-Deploy Command `alembic upgrade head`
-   (nebo prependnout do Start Command). Pak teprve mergovat do `main`.
+5. [x] **Na Renderu**: migrace běží při deployi — vyřešeno **prependnutím do
+   Start Command** (`alembic upgrade head && uvicorn ...`), ne přes Pre-Deploy
+   Command.
 
 **Ověřeno lokálně** proti SQLite kopii starého schématu: 3 řádky (s duplicitou)
 → upgrade → sloupce doplněny, duplicita odmazána (3→2), constraint přidán;
 idempotence, čerstvá DB i downgrade OK. Detaily v `alembic/README`.
-
-**Zbývá jediný manuální krok (bod 5):** nastavit na Renderu, ať migrace běží
-při deployi — pak je merge do `main` bezpečný.
 
 ## Iterace 4b — FUNCUBE-1 / AO-73 telemetrie (z PLAN.md)
 *Cíl: skutečná CubeSat telemetrie. ~3+ večery, nejtěžší část.*
