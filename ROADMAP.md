@@ -172,12 +172,175 @@ pak `OBSERVER_MODE=manual`.
    kontakt, poslední snímek).
 3. [ ] Vyčistit repo: `decode_apt.py` → `scripts/`, aktualizovat CLAUDE.md.
 
+## Iterace M2 — IQ pipeline (Meteor + Orbcomm)
+*Cíl: agent umí sám nahrát a dekódovat to, co dnes děláme ručně. ~4 večery.*
+
+**Proč:** `recorder.py` dělá FM demodulaci → 48 kHz WAV. To zničí fázovou
+informaci, na které stojí Meteor (OQPSK) i Orbcomm (SDPSK). `decoder.py` volá
+`noaa-apt`, dekodér mrtvého režimu. Obojí je slepá ulička — potřebujeme
+**baseband IQ**.
+
+**Klíčové rozhodnutí: oddělit nahrávání od dekódování.** Nahrávání musí stihnout
+přelet v reálném čase, dekódování ne. Ověřeno 22. 7.: realtime Orbcomm dekodér
+selhal, ale z uloženého IQ jsme dekódovali s PER 0,0 %.
+
+### M2.1 — IQ recorder
+- [ ] `recorder.py` ukládá surové IQ (`cs16`), ne demodulované audio
+- [ ] **Bias tee zapnout** — změřeno +14 dB; bez toho je LNA útlum
+- [ ] Manuální gain z env (`SDR_GAIN`), ne AGC
+- [ ] Vzorkovací frekvence per satelit: Meteor 1 MHz, Orbcomm 1,2288 MHz
+- [ ] Callback po každém chunku (pro M3 — progress a SNR)
+
+> **Akceptační kritéria M2.1**
+> 1. Nahrávka 10min přeletu vznikne jako `.cs16` a jde ji beze změny předat
+>    SatDumpu (`--baseband_format s16`) i `file_decoder.py`.
+> 2. V mock režimu (`MOCK=1`) vznikne syntetické IQ bez hardwaru; testy projdou.
+> 3. Log obsahuje potvrzení, že bias tee je zapnutý.
+> 4. Callback je volán ≥1×/s a dostane elapsed, total a naměřený SNR.
+
+### M2.2 — Dekódovací dispatcher
+- [ ] `decoder.py` = rozcestník podle satelitu (subprocess, jako dnes `noaa-apt`)
+- [ ] Meteor → `satdump meteor_m2-x_lrpt` (pozor: spouštět z `Resources` složky)
+- [ ] Orbcomm → `file_decoder.py`
+- [ ] Neúspěch dekódování nesmí shodit agenta ani smazat IQ
+
+> **Akceptační kritéria M2.2**
+> 1. Meteor nahrávka → PNG produkty v `recordings/<pass>/products/`.
+> 2. Orbcomm nahrávka → strukturovaný výstup (rámce, PER, sat_id, efemeridy).
+> 3. Chybějící/rozbitý dekodér = zalogovaný `notes`, contact se přesto odešle.
+> 4. Test na **reálné nahrávce z 22. 7.** (FM118) dá PER 0,0 % — regresní jistota.
+
+### M2.3 — Datový model pro telemetrii
+- [ ] `Contact.contact_type` (`image` / `telemetry`)
+- [ ] Tabulka/JSON pro dekódovaná data (rámce, PER, sat_id, efemeridy)
+- [ ] Dashboard: u telemetrie zobrazit počty rámců a PER místo náhledu snímku
+- [ ] Alembic migrace
+
+> **Akceptační kritéria M2.3**
+> 1. Orbcomm contact se na dashboardu zobrazí smysluplně (ne prázdná karta).
+> 2. CSV export obsahuje i telemetrické kontakty.
+> 3. `alembic upgrade head` projde na kopii produkční DB.
+
+### M2.4 — Retenční politika (NUTNÁ, ne volitelná)
+- [ ] IQ smazat po **úspěšném** dekódování; při selhání ponechat (k ladění)
+- [ ] Strop na celkovou velikost `recordings/` + úklid nejstarších
+
+> **Proč nutná:** ~10 min × 1,2288 MHz × 4 B ≈ **3 GB na přelet**. Při 42
+> přeletech denně je disk pryč za den. Oproti dosavadním 55 MB WAV je to
+> tisícinásobek.
+>
+> **Akceptační kritéria M2.4**
+> 1. Po úspěšném dekódování zůstanou produkty, IQ zmizí.
+> 2. Po selhání IQ zůstane a je v logu důvod.
+> 3. `recordings/` nikdy nepřeroste nastavený strop.
+
+---
+
+## Iterace M3 — Stránka „Přelet" (live řízení a vizualizace)
+*Cíl: jedna obrazovka, která řídí a ukazuje celý životní cyklus přeletu. ~3–4 večery.*
+
+Nová sekce `/pass` vedle Přelety / Mapa / Dashboard. Zatímco `/passes` je
+**seznam** a `/dashboard` je **historie**, `/pass` je **operační konzole pro
+právě probíhající (nebo nejbližší) přelet**.
+
+### Architektura
+Agent je za NATem, takže push z appky nejde. Použije se **stejný vzor jako
+`post_observer`**: agent tlačí stav, prohlížeč polluje.
+
+```
+agent (Mac)                          app (Render)         prohlížeč
+recorder, po každém chunku:
+  ├ SNR z FFT
+  ├ % hotovo            ──POST /station/live──→ drží  ──poll 5 s──→ /pass
+  └ satelit, AOS/LOS        (á 2 s)          poslední stav
+```
+
+### M3.1 — Live status endpoint
+- [ ] `POST /station/live` (auth stejná jako `/contacts`) — stav agenta
+- [ ] `GET /station/live` — poslední stav + `last_seen`
+- [ ] Heartbeat i mimo přelet (aby šlo poznat „agent žije, jen nenahrává")
+
+> **Akceptační kritéria M3.1**
+> 1. Bez tokenu → 401; nevalidní data → 422 (jako `/observer`).
+> 2. Když agent 30 s mlčí, `GET` vrací `state: "offline"`.
+> 3. Stav přežije restart appky (jako `station_status`), nebo je čistě
+>    in-memory a po restartu korektně hlásí `offline` — vybrat a otestovat.
+
+### M3.2 — Vizualizace oblohy (polární graf)
+- [ ] Az/el oblouk přeletu ze skyfieldu (krok 30 s), inline SVG
+- [ ] Vyznačit AOS, TCA, LOS a světové strany
+- [ ] Během přeletu živá poloha satelitu na oblouku
+
+> **Akceptační kritéria M3.2**
+> 1. Oblouk odpovídá predikci (AOS/LOS azimut sedí s `/passes`).
+> 2. Funguje i mimo přelet — ukazuje **nejbližší** přelet dopředu.
+> 3. Bez hardwaru a bez agenta se stránka vykreslí (jen bez živé polohy).
+
+### M3.3 — Progress a síla signálu
+- [ ] Progress bar (elapsed/total) + aktuální elevace a azimut
+- [ ] **Sparkline SNR v čase**, živě rostoucí
+- [ ] Fázový stav: `čeká` → `nahrává` → `dekóduje` → `hotovo` / `chyba`
+
+> **Akceptační kritéria M3.3**
+> 1. Během přeletu se progress hýbe a SNR křivka roste k TCA
+>    (ověřitelné proti profilu z 22. 7.: PER 18 % → 0 % → 3 %).
+> 2. Po LOS stránka přejde do `dekóduje` a pak na výsledek.
+> 3. Když agent umře uprostřed, UI to do 30 s pozná.
+
+### M3.4 — Event log přeletu ⭐
+- [ ] Časová osa událostí: AOS, start nahrávání, zámek, ztráta zámku, LOS,
+      start/konec dekódování, výsledek
+- [ ] Uchovat u contactu, zobrazit i zpětně
+
+> **Proč:** veškeré ladění 17.–22. 7. bylo „čti log". Mít to v UI je přesně ten
+> operations mindset, který Groundcom chce vidět.
+>
+> **Akceptační kritéria M3.4**
+> 1. Po přeletu lze z časové osy rekonstruovat, co se dělo a kde to selhalo.
+> 2. Události mají čas a jsou seřazené.
+
+### M3.5 — Stav stanice (health) ⭐⭐
+- [ ] Agent online/offline, SDR připojený, **bias tee**, gain, frekvence, poloha
+- [ ] Varování, když je něco podezřelé (bias tee vypnutý při použití LNA)
+
+> **Proč tohle považuju za nejcennější přírůstek:** za dva dny nás zdržely
+> přesně tyhle věci — odpojený dongle, SatDump držící zařízení, **nenapájený
+> LNA**. Kdyby to bylo vidět na jedné obrazovce *před* přeletem, ušetří to
+> hodiny. Provozně je to důležitější než hezký graf.
+>
+> **Akceptační kritéria M3.5**
+> 1. Odpojení dongle se projeví do 30 s.
+> 2. Vypnutý bias tee při nakonfigurovaném LNA = viditelné varování.
+> 3. Panel funguje i když žádný přelet neprobíhá.
+
+### Co dál na stránku — návrhy k rozhodnutí
+
+| Prvek | Hodnota | Náklad | Poznámka |
+|---|---|---|---|
+| **Fronta dalších přeletů** | vysoká | nízký | 3–5 dalších + který se bude nahrávat |
+| **Doppler: predikce vs. měření** | vysoká | střední | přesně tím jsme 21. 7. dokázali, že jde o satelit |
+| **Výsledek dekódování inline** | vysoká | nízký | rámce, PER, náhled snímku hned po přeletu |
+| **Spektrum v TCA (statické)** | střední | nízký | jeden snímek místo živého waterfallu |
+| **Ruční ovládání** (arm/skip/record) | střední | **vysoký** | ⚠️ vyžaduje, aby agent **polloval příkazy** — obrácení toku, návrh zvlášť |
+| **Živý waterfall** | střední | vysoký | ~9 MB/25 min; přes 5s polling trhané. **Odložit** |
+
+> ⚠️ **Ruční ovládání je architektonicky jiná liga.** Dnes agent jen tlačí.
+> Aby ho šlo z webu ovládat, musí si chodit pro příkazy (`GET /station/commands`).
+> Řešitelné, ale je to samostatné rozhodnutí — ne „ještě jedno tlačítko".
+
+---
+
 ## Bonusy (jen pokud zbyde čas — dle PLAN.md)
 - Doppler kompenzace při nahrávání (skyfield dává range rate zadarmo).
 - Multi-satelit konflikt scheduling (dva passy naráz → priorita dle max el).
 - SNR degradace alerting (ntfy když klesne pod práh vs. průměr).
 
 ## Doporučené pořadí
-**T → F → 5 → 4b → P** (bonusy kdykoli po F).
-Testy první — všechno ostatní se pak dělá bezpečně. Iterace 5 před 4b:
-je levnější, viditelnější pro Groundcom a nezávisí na novém hardwaru/DSP.
+**T → F → 5 → M → L → M2 → M3 → P** (4b a bonusy kdykoli po M2).
+
+M2 před M3: nemá smysl vizualizovat pipeline, která ještě neběží. **M2.1 dělat
+spolu s M2.4** — bez retence tě 3 GB/přelet zavalí hned při prvním testu.
+Callback pro M3 přidat rovnou v M2.1, když se recorder stejně přepisuje.
+
+P až nakonec — teď už je do README čím se pochlubit (snímek Meteoru ze 17. 7.,
+waterfall s Dopplerem a dekódované efemeridy z 22. 7.).
