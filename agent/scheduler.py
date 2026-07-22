@@ -91,6 +91,10 @@ NOTIFY_LEAD_S = 600  # send an ntfy alert ~10 min before AOS
 PROGRESS_LOG_S = 30  # how often the recording progress reaches the log
 LIVE_INTERVAL_S = 2  # how often the /pass console hears from us while recording
 HEARTBEAT_S = 10     # ... and while idle, so the console can tell we are alive
+# Settle time after a pass before looking for the next one. The console mirrors
+# this when it works out which upcoming passes we will actually catch — see
+# AGENT_COOLDOWN_S in app/routes/station.py.
+POST_PASS_COOLDOWN_S = 120
 
 
 def sample_rate_for(satellite: str) -> int:
@@ -361,7 +365,7 @@ def run() -> None:
         )
 
         # Wait past LOS before looking for the next pass
-        _sleep_with_heartbeat(120, "idle", note=result.notes)
+        _sleep_with_heartbeat(POST_PASS_COOLDOWN_S, "idle", note=result.notes)
 
 
 if __name__ == "__main__":

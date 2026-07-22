@@ -149,7 +149,47 @@
         .empty { color: #37474f; font-size: 0.78rem; padding: 0.6rem 0; }
         .footer { color: #37474f; font-size: 0.7rem; margin-top: 1.2rem; }
 
-        .grid + .grid { margin-top: 1.2rem; }
+        .grid + .grid, .card + .grid, .grid + .card { margin-top: 1.2rem; }
+
+        /* The answer to "did we get it?", where you were already looking. */
+        .result .result-head { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
+        .result .sat { color: #4fc3f7; font-size: 1rem; font-weight: bold; }
+        .result .when { color: #546e7a; font-size: 0.75rem; }
+
+        .badge {
+            font-size: 0.7rem;
+            padding: 0.12rem 0.45rem;
+            border-radius: 3px;
+            background: #1e3a5f;
+            color: #4fc3f7;
+        }
+
+        .badge.q-ok       { background: #1b3a2a; color: #81c784; }
+        .badge.q-degraded { background: #3a2a1a; color: #ffb74d; }
+        .badge.q-lost     { background: #3a1a1a; color: #e57373; }
+
+        .result-body { display: flex; align-items: center; gap: 1.6rem; flex-wrap: wrap; margin-top: 0.7rem; }
+        .result-body .stat { color: #546e7a; font-size: 0.75rem; }
+        .result-body .stat b { color: #c8d8e8; font-weight: normal; font-size: 0.95rem; }
+        .result-body .stat b.good { color: #81c784; }
+        .result-body .stat b.bad { color: #ffb74d; }
+        .result-body .thumb img { max-height: 90px; border-radius: 3px; display: block; }
+        .result-notes { color: #607d8b; font-size: 0.72rem; margin-top: 0.6rem; }
+
+        /* What we will and will not catch — a single dish cannot be in two
+           places at once, and that is worth knowing before the evening. */
+        .queue { list-style: none; display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.75rem; }
+        .queue li { display: flex; gap: 0.7rem; align-items: baseline; flex-wrap: wrap; }
+        .queue .t { color: #c8d8e8; min-width: 3.2rem; }
+        .queue .sat { color: #4fc3f7; min-width: 8rem; }
+        .queue .el { color: #546e7a; min-width: 3rem; text-align: right; }
+        /* On a narrow screen the plan drops onto its own line rather than off
+           the right-hand edge — it is the part worth reading. */
+        .queue .plan { color: #546e7a; flex: 1 1 8rem; }
+        .queue .plan-recording .plan { color: #81c784; }
+        .queue .plan-partial .plan { color: #ffb74d; }
+        .queue .plan-missed { opacity: 0.55; }
+        .queue .plan-missed .plan { color: #e57373; }
 
         /* Station health — the warnings are the reason this panel exists. */
         .warnings {

@@ -108,7 +108,62 @@
     </div>
 </div>
 
+{% if result %}
+<div class="card result">
+    <div class="card-title">Výsledek posledního přeletu</div>
+    <div class="result-head">
+        <span class="sat">{{ result.satellite }}</span>
+        <span class="when">{{ result.aos.astimezone(tz).strftime('%d.%m. %H:%M') }}</span>
+        {% if result.quality %}
+        <span class="badge q-{{ result.quality }}">{{ result.quality|upper }}</span>
+        {% endif %}
+    </div>
+    <div class="result-body">
+        {% if result.contact_type == 'telemetry' %}
+        <span class="stat">rámce <b>{{ result.frames if result.frames is not none else '–' }}</b></span>
+        <span class="stat">PER <b class="{{ 'good' if result.per is not none and result.per <= 5 else 'bad' }}">
+            {{ '%.1f%%' % result.per if result.per is not none else '–' }}</b></span>
+        {% if result.ephemeris %}
+        <span class="stat">efemeridy <b>{{ result.ephemeris }}</b></span>
+        {% endif %}
+        {% elif result.image_filename %}
+        <a href="/static/images/{{ result.image_filename }}" class="thumb">
+            <img src="/static/images/{{ result.image_filename }}" alt="Snímek {{ result.satellite }}">
+        </a>
+        {% endif %}
+        {% if result.snr is not none %}
+        <span class="stat">SNR <b>{{ result.snr }} dB</b></span>
+        {% endif %}
+    </div>
+    {% if result.notes %}<div class="result-notes">{{ result.notes }}</div>{% endif %}
+</div>
+{% endif %}
+
 <div class="grid">
+    <div class="card">
+        <div class="card-title">Fronta přeletů</div>
+        {% if queue %}
+        <ol class="queue">
+            {% for item in queue %}
+            <li class="plan-{{ item.plan }}">
+                <span class="t">{{ item.pass.aos.astimezone(tz).strftime('%H:%M') }}</span>
+                <span class="sat">{{ item.pass.satellite }}</span>
+                <span class="el">{{ item.pass.max_elevation }}°</span>
+                {% if item.plan == 'recording' %}
+                <span class="plan">nahraje se</span>
+                {% elif item.plan == 'partial' %}
+                <span class="plan">jen část (kolize s {{ item.blocked_by }})</span>
+                {% else %}
+                <span class="plan">vynechá se (kolize s {{ item.blocked_by }})</span>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ol>
+        {% else %}
+        <p class="empty">Žádné další přelety.</p>
+        {% endif %}
+    </div>
+
     <div class="card">
         <div class="card-title">Stav stanice</div>
         {% if health.warnings %}

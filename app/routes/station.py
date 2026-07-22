@@ -15,17 +15,20 @@ agent's next heartbeat says more than a stale row would. The station's
 *position* is a different thing and does live in the database.
 """
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 import jinja2
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import Session
 
 from app.auth import require_agent_auth
+from app.database import get_db
+from shared.models import Contact
 from shared.tle import current_azel, get_cached_passes, pass_track
 
 router = APIRouter()
@@ -44,6 +47,15 @@ VALID_STATES = {"idle", "waiting", "recording", "decoding", "done", "error"}
 
 SNR_HISTORY = 400  # samples kept per pass (a 15 min pass at 2 s ≈ 450)
 EVENT_HISTORY = 100
+
+QUEUE_LENGTH = 5           # how many upcoming passes the console lists
+# Mirrors POST_PASS_COOLDOWN_S in agent/scheduler.py: the agent settles for two
+# minutes after a pass before it looks for the next one, so a pass that ends
+# inside that window is one we will not hear at all.
+AGENT_COOLDOWN_S = 120
+# A finished pass stays on the console this long, so the decode result is
+# waiting when you look up after LOS.
+RESULT_WINDOW_S = 2 * 3600
 
 _live: dict = {
     "payload": None,
@@ -218,18 +230,19 @@ def station_health(live: dict) -> dict:
 # ── The page ──────────────────────────────────────────────────────────────────
 
 @router.get("/pass", response_class=HTMLResponse)
-async def pass_page(request: Request):
-    return templates.TemplateResponse(request, "pass.html", _pass_context(request))
+async def pass_page(request: Request, db: Session = Depends(get_db)):
+    return templates.TemplateResponse(request, "pass.html", _pass_context(db))
 
 
 @router.get("/pass/panel", response_class=HTMLResponse)
-async def pass_panel(request: Request):
+async def pass_panel(request: Request, db: Session = Depends(get_db)):
     """The polled fragment — same context, no page chrome."""
-    return templates.TemplateResponse(request, "pass_panel.html", _pass_context(request))
+    return templates.TemplateResponse(request, "pass_panel.html", _pass_context(db))
 
 
-def _pass_context(request: Request) -> dict:
+def _pass_context(db) -> dict:
     live = _live_state()
+    passes = get_cached_passes()
     p = _subject_pass(live)
 
     track, sky, live_pos = [], None, None
@@ -248,8 +261,72 @@ def _pass_context(request: Request) -> dict:
         "progress": _progress(live),
         "events": list(reversed(_live["events"])),  # newest first
         "health": station_health(live),
+        "queue": pass_queue(passes),
+        "result": last_result(db, live),
         "now": datetime.now(timezone.utc),
         "tz": _TZ,
+    }
+
+
+def pass_queue(passes: list, now: Optional[datetime] = None, limit: int = QUEUE_LENGTH) -> list:
+    """
+    The next few passes, and which of them the station will actually record.
+
+    The agent is single-dish and single-threaded: it records the soonest pass
+    to LOS, settles, then looks again. So a pass overlapping the one being
+    recorded is not "queued", it is *lost* — and knowing that in advance is the
+    difference between planning an evening and being surprised by it.
+    """
+    now = now or datetime.now(timezone.utc)
+    upcoming = sorted((p for p in passes if p.los > now), key=lambda p: p.aos)[:limit]
+
+    queue = []
+    busy_until = now
+    blocker = None
+    for p in upcoming:
+        if p.los <= busy_until:
+            queue.append({"pass": p, "plan": "missed", "blocked_by": blocker})
+            continue
+        # Woken mid-pass (or still busy at AOS) means a shortened recording,
+        # which is exactly what A1 made the recorder handle.
+        partial = p.aos < busy_until
+        queue.append({"pass": p, "plan": "partial" if partial else "recording",
+                      "blocked_by": blocker if partial else None})
+        busy_until = p.los + timedelta(seconds=AGENT_COOLDOWN_S)
+        blocker = p.satellite
+    return queue
+
+
+def last_result(db, live: dict) -> Optional[dict]:
+    """
+    The most recent contact, when it is recent enough to still be *this* pass.
+
+    After LOS the console would otherwise go blank exactly when the answer
+    arrives; this keeps the decode result where you were already looking.
+    """
+    now = datetime.now(timezone.utc)
+    contact = db.query(Contact).order_by(Contact.aos.desc()).first()
+    if contact is None:
+        return None
+
+    aos = contact.aos if contact.aos.tzinfo else contact.aos.replace(tzinfo=timezone.utc)
+    age_s = (now - aos).total_seconds()
+    if age_s > RESULT_WINDOW_S:
+        return None
+
+    telemetry = contact.telemetry or {}
+    return {
+        "satellite": contact.satellite,
+        "aos": aos,
+        "quality": contact.quality,
+        "contact_type": contact.contact_type or "image",
+        "snr": contact.snr,
+        "notes": contact.notes,
+        "image_filename": contact.image_filename,
+        "frames": telemetry.get("packets"),
+        "per": telemetry.get("per"),
+        "ephemeris": len(telemetry.get("ephemeris") or []),
+        "is_current": live.get("satellite") == contact.satellite,
     }
 
 

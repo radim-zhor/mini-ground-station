@@ -462,12 +462,21 @@ s LNA v cestě, zapnuté AGC, MOCK režim a docházející místo na disku.
 
 | Prvek | Hodnota | Náklad | Poznámka |
 |---|---|---|---|
-| **Fronta dalších přeletů** | vysoká | nízký | 3–5 dalších + který se bude nahrávat |
+| ~~**Fronta dalších přeletů**~~ ✅ | vysoká | nízký | hotovo 22. 7. — 5 dalších + plán nahrávání |
 | **Doppler: predikce vs. měření** | vysoká | střední | přesně tím jsme 21. 7. dokázali, že jde o satelit |
-| **Výsledek dekódování inline** | vysoká | nízký | rámce, PER, náhled snímku hned po přeletu |
+| ~~**Výsledek dekódování inline**~~ ✅ | vysoká | nízký | hotovo 22. 7. — rámce, PER, náhled snímku |
 | **Spektrum v TCA (statické)** | střední | nízký | jeden snímek místo živého waterfallu |
 | **Ruční ovládání** (arm/skip/record) | střední | **vysoký** | ⚠️ vyžaduje, aby agent **polloval příkazy** — obrácení toku, návrh zvlášť |
 | **Živý waterfall** | střední | vysoký | ~9 MB/25 min; přes 5s polling trhané. **Odložit** |
+
+**Hotovo z tabulky (2026-07-22):**
+- **Fronta přeletů** nesimuluje jen čas, ale i chování scheduleru: stanice má
+  jednu anténu a jedno vlákno, takže přelet, který začne a skončí uvnitř
+  jiného, se **nezařadí do fronty, ale ztratí**. Fronta to říká dopředu
+  („vynechá se, kolize s X" / „jen část"), včetně 2min cooldownu po přeletu.
+  Ověřeno na reálných predikcích: ORBCOMM FM 116 vypadl kvůli FM 108.
+- **Výsledek dekódování** zůstává na konzoli 2 h po přeletu, aby po LOS
+  nezmizela obrazovka přesně ve chvíli, kdy dorazí odpověď.
 
 > ⚠️ **Ruční ovládání je architektonicky jiná liga.** Dnes agent jen tlačí.
 > Aby ho šlo z webu ovládat, musí si chodit pro příkazy (`GET /station/commands`).
