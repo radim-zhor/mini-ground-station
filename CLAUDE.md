@@ -85,6 +85,24 @@ ground-station/
   deleted.
 - **Bias tee on, gain manual.** The LNA is bias-tee powered (measured +14 dB);
   AGC overloads with an LNA ahead of the tuner.
+- **Never test the antenna on the FM broadcast band.** An FBP-137s bandpass
+  filter sits ahead of the LNA, so 88-108 MHz reads ~10-15 dB above noise on a
+  perfectly healthy chain. Measured 22. 7. and misread as a dead antenna for an
+  hour. Test in band, bias tee on, `SDR_GAIN=20.7`.
+- **`pyrtlsdr` needs `DYLD_LIBRARY_PATH=/opt/homebrew/lib`.** ctypes does not
+  search Homebrew's prefix on Apple Silicon, and `recorder.py` imports `rtlsdr`
+  *lazily* — so a misconfigured agent starts cleanly and only fails at AOS,
+  when the pass is already being lost. Any unattended launcher must set it.
+- **Selection is by AOS, not by elevation** (`_next_upcoming_pass`). A weak pass
+  that starts first holds the dongle and shadows a better one underneath it;
+  simulated 22. 7., a 78.3° Meteor pass drops to 69.8 % coverage behind a 32.2°
+  Orbcomm. Fixing this means scoring passes, not just sorting them.
+- **Never restart the agent mid-pass.** `find_events()` needs AOS, culmination
+  and LOS inside a window starting *now*, so a pass already in progress
+  disappears from the recomputed cache and is lost for good.
+- **Unattended operation is documented in `docs/bezobsluzny-provoz.md`** — the
+  launch line, why each env var exists, the 40 s cold start that looks like a
+  hang, and why launchd currently fails (macOS TCC on `~/Documents`).
 - **Notifications:** ntfy.sh via `requests.post()`, no SMTP.
 - **Agent → app auth:** shared secret in `Authorization` header (env var on both sides).
 - **Mobile station:** the ground station moves. The agent auto-detects its position
@@ -99,6 +117,11 @@ ground-station/
   `telemetry` JSON column, because its shape differs per decoder and only the
   dashboard reads it. Telemetry quality is derived from PER, not SNR — a clean
   decode at modest SNR is a good pass.
+- **PER gates `success`, and `success` gates retention** (`MAX_ACCEPTABLE_PER`
+  in `decoder.py`, default 50 %). Until 22. 7. any run that emitted a packet
+  counted as a success, so a PER 99 % decode of a good recording (avg SNR
+  17.8 dB) had its 2.94 GB of baseband deleted and could never be re-run. A
+  decode that cannot be trusted must keep its IQ.
 
 ## Development setup
 
@@ -130,6 +153,7 @@ User-facing tutorials live in `docs/`:
 | File | Obsah |
 |---|---|
 | `docs/sdrpp-recording.md` | Jak nahrát přelet v SDR++ a dekódovat APT snímek přes `noaa-apt` |
+| `docs/bezobsluzny-provoz.md` | Jak nechat agenta nahrávat přes noc bez dozoru, a co se při tom tiše rozbije |
 
 ## Environment variables
 
