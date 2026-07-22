@@ -98,6 +98,30 @@ def load_satellites() -> list[EarthSatellite]:
     ]
 
 
+def tle_lines(name: str) -> Optional[tuple]:
+    """
+    Raw (line0, line1, line2) TLE for a satellite, as cached from SatNOGS.
+
+    Decoders that are not skyfield-based need the TLE text itself — the
+    vendored Orbcomm decoder feeds it to pyephem for Doppler compensation.
+    Matching is case-insensitive and ignores spaces, because the same bird is
+    "ORBCOMM FM 118" in SatNOGS and "ORBCOMM FM118" almost everywhere else.
+    """
+    def key(s: str) -> str:
+        return s.replace(" ", "").upper()
+
+    cache = _cache_path()
+    if not cache.exists():
+        return None
+    try:
+        for e in json.loads(cache.read_text()):
+            if key(e["tle0"].lstrip("0 ")) == key(name):
+                return (e["tle0"].lstrip("0 "), e["tle1"], e["tle2"])
+    except Exception:
+        return None
+    return None
+
+
 # Runtime override of the observer position (mobile station). Set via
 # set_observer() — on the agent from IP geolocation, on the web app from the
 # agent's POST /observer report. Falls back to env vars / Prague default.

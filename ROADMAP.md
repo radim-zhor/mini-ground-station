@@ -219,17 +219,45 @@ SNR profil). Jeden adresář na přelet: `recordings/<pass>/<pass>.cs16` +
   jak odhaduje M2.4. **Na reálném hardwaru zatím neověřeno — dongle nebyl
   připojen** (kritérium 1 a 3 čeká na příští přelet).
 
-### M2.2 — Dekódovací dispatcher
-- [ ] `decoder.py` = rozcestník podle satelitu (subprocess, jako dnes `noaa-apt`)
-- [ ] Meteor → `satdump meteor_m2-x_lrpt` (pozor: spouštět z `Resources` složky)
-- [ ] Orbcomm → `file_decoder.py`
-- [ ] Neúspěch dekódování nesmí shodit agenta ani smazat IQ
+### M2.2 — Dekódovací dispatcher ✅ HOTOVO 2026-07-22
+- [x] `decoder.py` = rozcestník podle satelitu (subprocess, jako dnes `noaa-apt`)
+- [x] Meteor → `satdump meteor_m2-x_lrpt` (pozor: spouštět z `Resources` složky)
+- [x] Orbcomm → `file_decoder.py`
+- [x] Neúspěch dekódování nesmí shodit agenta ani smazat IQ
 
 > **Akceptační kritéria M2.2**
 > 1. Meteor nahrávka → PNG produkty v `recordings/<pass>/products/`.
 > 2. Orbcomm nahrávka → strukturovaný výstup (rámce, PER, sat_id, efemeridy).
 > 3. Chybějící/rozbitý dekodér = zalogovaný `notes`, contact se přesto odešle.
 > 4. Test na **reálné nahrávce z 22. 7.** (FM118) dá PER 0,0 % — regresní jistota.
+
+**Výstup:** `decode(pass_dir)` vrací `DecodeResult` (success, kind, products,
+stats, notes). Kritérium 4 splněno: `tests/test_orbcomm_real.py` na nahrávce
+`1784673817p299` dává **PER 0,0 %, 98 rámců, efemeridy 22,7 km od TLE predikce**.
+80 testů, ruff clean.
+
+**Poznámky k realizaci:**
+- Orbcomm most (`agent/orbcomm.py`) je nejzajímavější kus: `file_decoder.py` je
+  výzkumný skript s kódem na úrovni modulu, matplotlib okny a vstupem ve formátu
+  `.mat` z upstream recorderu. Místo přepisování DSP se most trefí do jeho
+  rozhraní — vybere okno, zapíše `.mat`, spustí skript, rozparsuje stdout.
+- **Výběr okna dělá SNR profil z M2.1.** Dekodér chce 2 s, přelet trvá minuty
+  a rozdíl mezi horizontem a TCA byl 22. 7. rozdíl mezi PER 18 % a 0 %. Bez
+  profilu se bere střed přeletu.
+- `MPLBACKEND=Agg` je to, co dělá skript použitelným bez obsluhy — končí
+  `plt.show()`, což by jinak čekalo na okno donekonečna.
+- Počet rámců se bere z `packets.txt` (jeden hex rámec na řádek), ne z parsování
+  výpisu; parsování hlásilo i řádky preambule jako rámce.
+- **Změna: Orbcomm se ladí na 137,5 MHz**, ne na kanál satelitu. Všechny kanály
+  se pak vejdou do pásma, žádný nesedí na DC špičce a soubor vypadá přesně jako
+  upstream nahrávky, proti kterým je dekodér odladěný.
+- TLE pro pyephem se bere z naší SatNOGS cache (`shared.tle.tle_lines`), ne
+  z vendorovaného `tles/` adresáře, který upstream skript neumí spolehlivě
+  aktualizovat (viz `patches/README.md`).
+- **Meteor cesta je ověřená jen po úroveň příkazové řádky** — satdump
+  `meteor_m2-x_lrpt` proběhl celý na syntetickém šumu a korektně nevyrobil
+  snímek. Reálné Meteor IQ ze 17. 7. se nedochovalo (zůstaly jen produkty),
+  takže skutečný snímek z naší nahrávky čeká na příští přelet.
 
 ### M2.3 — Datový model pro telemetrii
 - [ ] `Contact.contact_type` (`image` / `telemetry`)

@@ -29,7 +29,8 @@ ground-station/
 │   ├── scheduler.py   # skyfield pass prediction, triggers recorder
 │   ├── recorder.py    # pyrtlsdr → interleaved int16 IQ (.cs16); mock mode for CI
 │   ├── retention.py   # drops IQ after a successful decode, caps recordings/
-│   └── decoder.py     # noaa-apt subprocess (legacy APT; dispatcher lands in M2.2)
+│   ├── decoder.py     # dispatcher: satdump (Meteor) / file_decoder.py (Orbcomm)
+│   └── orbcomm.py     # bridge from our .cs16 to the vendored Orbcomm decoder
 ├── app/
 │   ├── main.py        # FastAPI entrypoint
 │   ├── routes/        # /passes, /contacts, /satellite/position, etc.
@@ -58,6 +59,15 @@ ground-station/
 - **Sample rate is per satellite** (`SAMPLE_RATES` in `scheduler.py`): Meteor
   1 Msps, Orbcomm 1.2288 Msps (= 256 × 4800 baud, assumed by the upstream
   decoder), ISS 250 ksps.
+- **Orbcomm is recorded at 137.5 MHz centre**, not on the satellite's own
+  channel: all Orbcomm channels then fit in the band, none sits on the DC
+  spike, and the file matches what the vendored decoder was proven against.
+- **Decoder dispatch is by satellite name** (`agent/decoder.py`), and it never
+  raises: a failed decode returns `success=False`, which keeps the IQ for a
+  manual re-run. The Orbcomm bridge (`agent/orbcomm.py`) picks the best 2 s
+  window from the recorded SNR profile, writes it as the `.mat` the upstream
+  script expects and runs it with `MPLBACKEND=Agg` (the script ends in
+  `plt.show()` and would otherwise block forever).
 - **Retention is part of the capture path** (`agent/retention.py`): ~3 GB per
   10-minute pass at 1.2288 Msps. IQ is deleted after a *successful* decode and
   kept after a failure; `recordings/` is capped by `RECORDINGS_MAX_GB`, oldest
@@ -120,3 +130,5 @@ User-facing tutorials live in `docs/`:
 | `SDR_GAIN` | agent | Tuner gain in dB, or `auto` for AGC (default 20.7 — the value verified with this station's LNA) |
 | `SDR_BIAS_TEE` | agent | `0` disables bias-tee power to the LNA (default on) |
 | `RECORDINGS_MAX_GB` | agent | Size cap for `recordings/`; oldest passes are dropped first (default 20) |
+| `SATDUMP_BIN` | agent | Path to the satdump CLI (default: `satdump` in PATH, then the macOS .app) |
+| `SATDUMP_METEOR_PIPELINE` | agent | LRPT pipeline (default `meteor_m2-x_lrpt` = 72k; `meteor_m2-x_lrpt_80k` for the 80k mode) |

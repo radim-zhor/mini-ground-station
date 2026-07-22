@@ -23,6 +23,7 @@ import requests
 
 from agent import retention
 from agent.client import post_contact, post_observer, retry_pending
+from agent.decoder import decode
 from agent.location import detect_location
 from agent.recorder import BYTES_PER_SAMPLE, RECORDINGS_DIR, record_iq
 from shared.tle import get_cached_passes, set_observer
@@ -75,6 +76,13 @@ SAMPLE_RATES: dict[str, int] = {
 }
 DEFAULT_SAMPLE_RATE = 1_000_000
 
+# Orbcomm is recorded with the dongle parked at 137.5 MHz instead of on the
+# satellite's own channel: every Orbcomm channel (137.25–137.6625) then sits
+# inside the 1.2288 MHz band, none of them lands on the DC spike, and the file
+# looks exactly like the upstream recordings the vendored decoder was built and
+# proven against.
+ORBCOMM_CENTER_HZ = 137_500_000
+
 POLL_INTERVAL = 30   # seconds between pass-list refreshes
 PRE_AOS_WAKE = 10    # seconds before AOS to stop sleeping and start recording
 NOTIFY_LEAD_S = 600  # send an ntfy alert ~10 min before AOS
@@ -87,6 +95,13 @@ def sample_rate_for(satellite: str) -> int:
         if satellite.upper().startswith(prefix):
             return rate
     return DEFAULT_SAMPLE_RATE
+
+
+def center_freq_for(satellite: str) -> int:
+    """Where to park the dongle — not always the satellite's own downlink."""
+    if satellite.upper().startswith("ORBCOMM"):
+        return ORBCOMM_CENTER_HZ
+    return FREQUENCIES[satellite]
 
 
 def notify_upcoming(p) -> None:
@@ -196,11 +211,11 @@ def run() -> None:
         if wait_s > PRE_AOS_WAKE:
             time.sleep(wait_s - PRE_AOS_WAKE)
 
-        freq = FREQUENCIES.get(nxt.satellite)
-        if freq is None:
+        if nxt.satellite not in FREQUENCIES:
             log.warning("No frequency for %s — skipping", nxt.satellite)
             time.sleep(60)
             continue
+        freq = center_freq_for(nxt.satellite)
 
         # ── Record ────────────────────────────────────────────────────────────
         # Record until LOS, not for a fixed length (A1). If the loop woke late
@@ -244,11 +259,11 @@ def run() -> None:
         )
 
         # ── Decode ────────────────────────────────────────────────────────────
-        # The decoding dispatcher (SatDump for Meteor, file_decoder for
-        # Orbcomm) lands in M2.2. Until then the baseband is kept and the
-        # contact says so, rather than pretending a decode happened.
-        notes = f"IQ recorded ({rec.duration_s:.0f} s @ {rate / 1e6:.4f} Msps), decoding pending"
-        retention.after_decode(rec.pass_dir, success=False, reason="no decoder wired up yet (M2.2)")
+        # decode() never raises: a failed decode costs us the products, not the
+        # pass. On failure the IQ stays on disk for a manual re-run.
+        result = decode(rec.pass_dir)
+        log.info("Decode: %s", result.notes)
+        retention.after_decode(rec.pass_dir, result.success, reason=result.notes)
         retention.enforce_cap(RECORDINGS_DIR, keep=rec.pass_dir)
 
         post_contact(
@@ -259,7 +274,8 @@ def run() -> None:
             max_elevation=nxt.max_elevation,
             snr=rec.peak_snr,
             avg_snr=rec.avg_snr,
-            notes=notes,
+            notes=result.notes,
+            png_path=result.image,
         )
 
         # Wait past LOS before looking for the next pass
