@@ -104,6 +104,12 @@ def test_pass_page_renders_without_an_agent(client):
     assert "AOS" in resp.text
 
 
+def test_every_page_links_to_the_console(client):
+    # A page nothing links to is a page nobody finds.
+    for path in ("/passes", "/map", "/dashboard"):
+        assert 'href="/pass"' in client.get(path).text, f"{path} has no link to /pass"
+
+
 def test_pass_page_shows_the_sky_arc_for_the_next_pass(client):
     page = client.get("/pass").text
     assert "polyline" in page          # the az/el arc
