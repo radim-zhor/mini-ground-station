@@ -160,8 +160,11 @@ poloha z DB), reálná IP detekce na zařízení. Přesnost IP geolokace je ~km,
 což pro predikce bohatě stačí (footprint NOAA ~3000 km). Pozor na VPN —
 pak `OBSERVER_MODE=manual`.
 
-## Iterace P — Prezentace / portfolio finish
+## Iterace P — Prezentace / portfolio finish ⏸️ ODLOŽENO NA NEURČITO (2026-07-22)
 *Cíl: projekt se dá ukázat u pohovoru. ~1 večer.*
+
+**Odloženo na neurčito.** Nemá termín ani pořadí, dělá se až se rozhodne, že je
+čas. Body zůstávají sepsané, aby se k nim dalo vrátit.
 
 1. [ ] `README.md`: co to je, architektura (diagram z CLAUDE.md),
    screenshoty mapy + dashboardu + dekódovaný snímek, live demo link,
@@ -478,11 +481,14 @@ s LNA v cestě, zapnuté AGC, MOCK režim a docházející místo na disku.
 - SNR degradace alerting (ntfy když klesne pod práh vs. průměr).
 
 ## Doporučené pořadí
-**T → F → 5 → M → L → M2 → M3 → P** (4b a bonusy kdykoli po M2).
+**T → F → 5 → M → L → M2 → M3** — vše hotovo k 2026-07-22.
+**P je odložené na neurčito.**
 
-M2 před M3: nemá smysl vizualizovat pipeline, která ještě neběží. **M2.1 dělat
-spolu s M2.4** — bez retence tě 3 GB/přelet zavalí hned při prvním testu.
-Callback pro M3 přidat rovnou v M2.1, když se recorder stejně přepisuje.
+Zbývá: návrhy z tabulky u M3, iterace 4b (FUNcube) a bonusy — v libovolném
+pořadí. Nad vším visí jedno: **celý IQ pipeline je zatím ověřený jen na
+uložených datech a v mocku.** První přelet s připojeným donglem je důležitější
+než další funkce.
 
-P až nakonec — teď už je do README čím se pochlubit (snímek Meteoru ze 17. 7.,
-waterfall s Dopplerem a dekódované efemeridy z 22. 7.).
+M2 před M3 dávalo smysl: nemá cenu vizualizovat pipeline, která ještě neběží.
+M2.1 spolu s M2.4 taky — bez retence by 3 GB/přelet zavalily disk hned při
+prvním testu.
