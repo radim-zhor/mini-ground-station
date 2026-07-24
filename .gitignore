@@ -14,3 +14,4 @@ orbcomm-receiver/
 .ruff_cache/
 requirements-ci.txt
 logs/
+harvest/

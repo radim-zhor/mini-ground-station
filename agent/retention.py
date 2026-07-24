@@ -27,6 +27,50 @@ log = logging.getLogger(__name__)
 
 DEFAULT_MAX_GB = 20.0
 
+# Where decoded products are kept for good. enforce_cap reclaims space by
+# dropping whole oldest pass directories, which also throws away their tiny but
+# irreplaceable products (telemetry.json, packets.txt, images). Observed
+# 23./24. 7.: a night of failed passes kept 2.5 GB of IQ each, the cap forced
+# wholesale deletion, and the good evening telemetry and the best Meteor image
+# went with it. So every decode's products are copied here first — a sibling of
+# recordings/, never touched by retention — before any directory can be dropped.
+HARVEST_DIR = Path(__file__).parent.parent / "harvest"
+
+# Products worth keeping forever. The .cs16 IQ is deliberately excluded (that is
+# the multi-GB data retention exists to reclaim); orbcomm_decode.log is kept
+# because it is the human-readable decode with the parsed packets.
+_PRODUCT_GLOBS = ("telemetry.json", "packets.txt", "orbcomm_decode.log",
+                  "MSU-MR/*.png", "*.png")
+
+
+def archive_products(pass_dir: Path, harvest_dir: Optional[Path] = None) -> int:
+    """Copy a pass's decoded products into the harvest archive, before any
+    retention pass can delete the directory. Idempotent, never raises: losing a
+    copy must not cost the recording or crash the agent. Returns files copied.
+    """
+    harvest = harvest_dir or HARVEST_DIR
+    products = pass_dir / "products"
+    if not products.is_dir():
+        return 0
+    dest = harvest / pass_dir.name
+    copied = 0
+    try:
+        for pattern in _PRODUCT_GLOBS:
+            for src in products.glob(pattern):
+                if not src.is_file():
+                    continue
+                target = dest / src.relative_to(products)
+                if target.exists() and target.stat().st_size == src.stat().st_size:
+                    continue  # already archived
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, target)
+                copied += 1
+    except Exception:
+        log.exception("Archiving products of %s failed — pass continues", pass_dir.name)
+    if copied:
+        log.info("Harvest: archived %d product file(s) from %s", copied, pass_dir.name)
+    return copied
+
 
 def max_bytes() -> int:
     """Size cap for `recordings/`, from RECORDINGS_MAX_GB (default 20 GB)."""

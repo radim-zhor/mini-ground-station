@@ -414,6 +414,10 @@ def run() -> None:
         log.info("Decode: %s", result.notes)
         passlog.add("decode_finished" if result.success else "decode_failed", result.notes)
 
+        # Archive the products before anything can reclaim the directory — the
+        # decoded telemetry and images are the deliverable and must outlive the
+        # IQ (and the cap-driven deletion of old pass directories).
+        retention.archive_products(rec.pass_dir)
         retention.after_decode(rec.pass_dir, result.success, reason=result.notes)
         retention.enforce_cap(RECORDINGS_DIR, keep=rec.pass_dir)
         passlog.add(
