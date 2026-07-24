@@ -352,31 +352,31 @@
                     <div class="tele-row">
                         <div class="tele-stat">
                             <span class="k">Rámce</span>
-                            <span class="v">{{ t.packets if t.packets is not none else '–' }}</span>
+                            <span class="v">{{ t.get('packets') if t.get('packets') is not none else '–' }}</span>
                         </div>
                         <div class="tele-stat">
                             <span class="k">PER</span>
-                            <span class="v {{ 'per-good' if t.per is not none and t.per <= 5 else 'per-bad' }}">
-                                {{ '%.1f%%' % t.per if t.per is not none else '–' }}
+                            <span class="v {{ 'per-good' if t.get('per') is not none and t.get('per') <= 5 else 'per-bad' }}">
+                                {{ '%.1f%%' % t.get('per') if t.get('per') is not none else '–' }}
                             </span>
                         </div>
-                        {% if t.freq_offset_hz is not none %}
+                        {% if t.get('freq_offset_hz') is not none %}
                         <div class="tele-stat">
                             <span class="k">Zbytkový offset</span>
-                            <span class="v">{{ '%.0f Hz' % t.freq_offset_hz }}</span>
+                            <span class="v">{{ '%.0f Hz' % t.get('freq_offset_hz') }}</span>
                         </div>
                         {% endif %}
                     </div>
 
-                    {% if t.packet_types %}
+                    {% if t.get('packet_types') %}
                     <div class="tele-types">
-                        {% for kind, count in t.packet_types.items() %}
+                        {% for kind, count in t.get('packet_types').items() %}
                         <span class="chip">{{ kind }} <b>{{ count }}</b></span>
                         {% endfor %}
                     </div>
                     {% endif %}
 
-                    {% for e in (t.ephemeris or []) %}
+                    {% for e in (t.get('ephemeris') or []) %}
                     <div class="tele-ephem">
                         <span class="k">Efemeridy</span>
                         {{ '%.4f' % e.lat }}, {{ '%.4f' % e.lon }}
