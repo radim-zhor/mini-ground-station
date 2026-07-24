@@ -76,7 +76,8 @@ def run(pass_dir: Path):
             per = stats.get("per")
             pk = stats.get("packets", 0)
             results.append((label, off, pk, per))
-            print(f"  {label:<42s} {off:7.1f}s {pk:7d} {('%.1f%%' % per) if per is not None else '   n/a':>8s}")
+            per_txt = f"{per:.1f}%" if per is not None else "n/a"
+            print(f"  {label:<42s} {off:7.1f}s {pk:7d} {per_txt:>8s}")
         except Exception as e:
             print(f"  {label:<42s} {off:7.1f}s   CHYBA: {type(e).__name__}: {e}")
         finally:
