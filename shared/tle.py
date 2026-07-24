@@ -47,6 +47,9 @@ SATELLITE_NORAD_IDS = METEOR_NORAD_IDS | ORBCOMM_NORAD_IDS | ISS_NORAD_IDS
 
 CACHE_TTL_SECONDS = 12 * 3600  # refresh TLE every 12 hours
 PASSES_CACHE_TTL = 300          # recompute passes every 5 minutes
+# How far before "now" the pass search starts, so a pass already in progress
+# survives a cache refresh. Longer than any pass this station records (~15 min).
+PASS_LOOKBACK_MINUTES = 30
 
 ts = load.timescale(builtin=True)
 
@@ -169,8 +172,16 @@ def predict_passes(hours: int = 24, observer_latlon: Optional[tuple] = None) -> 
     satellites = load_satellites()
     observer = wgs84.latlon(*observer_latlon) if observer_latlon else observer_location()
 
-    t0 = ts.now()
-    t1 = ts.tt_jd(t0.tt + hours / 24.0)
+    # Start the search *before* now. find_events() only reports a pass when the
+    # whole AOS/culmination/LOS triple falls inside the window, so a search
+    # starting at "now" silently omits every pass already in progress. When the
+    # 5-minute cache then refreshed mid-pass, that pass vanished from the
+    # prediction and the scheduler moved on: 22. 7. a 78.3° Meteor was lost
+    # this way, with no restart involved. Looking back one lookback window
+    # keeps in-progress passes visible; already-finished ones are dropped below.
+    now_ts = ts.now()
+    t0 = ts.tt_jd(now_ts.tt - PASS_LOOKBACK_MINUTES / 1440.0)
+    t1 = ts.tt_jd(now_ts.tt + hours / 24.0)
     now_dt = datetime.now(timezone.utc)
 
     result = []
@@ -193,6 +204,11 @@ def predict_passes(hours: int = 24, observer_latlon: Optional[tuple] = None) -> 
             elif event == 2 and "tca" in pass_data:  # LOS
                 aos_dt = pass_data["aos"].utc_datetime()
                 los_dt = t.utc_datetime()
+                if los_dt <= now_dt:
+                    # Already over — an artefact of the lookback window, not a
+                    # pass anyone can still record.
+                    pass_data = {}
+                    continue
                 duration_s = int((los_dt - aos_dt).total_seconds())
                 minutes_until = int((aos_dt - now_dt).total_seconds() / 60)
 

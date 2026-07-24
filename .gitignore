@@ -13,3 +13,5 @@ orbcomm-receiver/
 .pytest_cache/
 .ruff_cache/
 requirements-ci.txt
+logs/
+harvest/

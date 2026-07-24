@@ -16,6 +16,7 @@ load_dotenv()
 
 import logging
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -60,9 +61,19 @@ FREQUENCIES: dict[str, int] = {
     "ORBCOMM FM 112": 137_662_500,
     "ORBCOMM FM 113": 137_662_500,
     "ORBCOMM FM 116": 137_662_500,
-    # ISS — APRS digipeater; outside the filter passband (bypass it)
-    "ISS (ZARYA)": 145_825_000,
+    # ISS is deliberately NOT here — it is handled by is_iss()/center_freq_for
+    # and gated behind ISS_ENABLED, see below.
 }
+
+# ISS APRS digipeater downlink. It sits at 145.825 MHz, outside the FBP-137s
+# passband, so it is only receivable when the filter has been physically
+# bypassed. Recording it is therefore opt-in (ISS_ENABLED): left on by default,
+# a high ISS pass (they reach ~87°) would outrank every 137 MHz sat in the
+# value-based selection, grab the dongle, and record noise through the filter.
+# The satellite's name from SatNOGS is unstable ("ISS" live, "ISS (ZARYA)" in
+# the fixture), so everything ISS keys off the is_iss() prefix, never an exact
+# name. The APRS name/comment is broadcast in the clear, unlike Orbcomm.
+ISS_FREQ_HZ = 145_825_000
 
 # Capture sample rate (Hz) per satellite family. Wide enough for the signal
 # plus Doppler, narrow enough not to write more bytes than necessary — at
@@ -90,11 +101,21 @@ PRE_AOS_WAKE = 10    # seconds before AOS to stop sleeping and start recording
 NOTIFY_LEAD_S = 600  # send an ntfy alert ~10 min before AOS
 PROGRESS_LOG_S = 30  # how often the recording progress reaches the log
 LIVE_INTERVAL_S = 2  # how often the /pass console hears from us while recording
+
+# Set while a /station/live update is in flight, so the recording thread never
+# waits on the network and updates never queue up behind a slow app.
+_live_inflight = threading.Event()
 HEARTBEAT_S = 10     # ... and while idle, so the console can tell we are alive
 # Settle time after a pass before looking for the next one. The console mirrors
 # this when it works out which upcoming passes we will actually catch — see
 # AGENT_COOLDOWN_S in app/routes/station.py.
 POST_PASS_COOLDOWN_S = 120
+
+# Choosing between overlapping passes (see _pass_value). The margin keeps the
+# scheduler from swapping on a near-tie, where the switch costs more of the
+# earlier pass than the extra elevation is worth.
+VALUE_MARGIN = 10.0    # degrees the challenger must beat the incumbent by
+IMAGING_BONUS = 25.0   # degrees-equivalent for a satellite that returns a picture
 
 
 def sample_rate_for(satellite: str) -> int:
@@ -109,7 +130,29 @@ def center_freq_for(satellite: str) -> int:
     """Where to park the dongle — not always the satellite's own downlink."""
     if satellite.upper().startswith("ORBCOMM"):
         return ORBCOMM_CENTER_HZ
+    if is_iss(satellite):
+        return ISS_FREQ_HZ
     return FREQUENCIES[satellite]
+
+
+def is_iss(satellite: str) -> bool:
+    """True for any ISS name variant — SatNOGS returns "ISS", the fixture
+    "ISS (ZARYA)", so match on the prefix rather than an exact name."""
+    return satellite.upper().startswith("ISS")
+
+
+def iss_enabled() -> bool:
+    """ISS is recorded only when the operator has bypassed the FBP-137s filter
+    and set ISS_ENABLED=1 for the session (145.825 MHz is out of band)."""
+    return os.getenv("ISS_ENABLED", "0") != "0"
+
+
+def recordable(satellite: str) -> bool:
+    """Whether this pass should be recorded at all. ISS only when the filter is
+    bypassed; everything else must have a known 137 MHz downlink."""
+    if is_iss(satellite):
+        return iss_enabled()
+    return satellite in FREQUENCIES
 
 
 def notify_upcoming(p) -> None:
@@ -139,13 +182,51 @@ def _next_upcoming_pass():
     ignores a pass already in progress, which we can still partially record.
     Predictions come from the shared 5-minute cache instead of a fresh skyfield
     run on every 30 s poll.
+
+    Satellites without a downlink frequency are filtered out *here*, not at the
+    skip below: they are unrecordable, and selecting one anyway makes it the
+    "next" pass for its whole duration, blocking every satellite it overlaps.
+    Observed 22. 7.: an ISS pass (no frequency, name mismatch) shadowed the
+    entire Orbcomm FM 113 pass under it.
     """
     now = datetime.now(timezone.utc)
     upcoming = sorted(
-        (p for p in get_cached_passes() if p.los > now),
+        (
+            p
+            for p in get_cached_passes()
+            if p.los > now and recordable(p.satellite)
+        ),
         key=lambda p: p.aos,
     )
-    return upcoming[0] if upcoming else None
+    if not upcoming:
+        return None
+
+    # Earliest AOS is the default, but not when something clearly better starts
+    # underneath it: one dongle means the pass we take shadows everything it
+    # overlaps. Only passes overlapping the earliest one are considered, so the
+    # choice stays bounded and the same input always gives the same answer.
+    first = best = upcoming[0]
+    for p in upcoming[1:]:
+        if p.aos >= first.los:
+            break
+        if _pass_value(p) > _pass_value(best) + VALUE_MARGIN:
+            best = p
+    return best
+
+
+def _pass_value(p) -> float:
+    """
+    How much a pass is worth, for choosing between overlapping ones.
+
+    Elevation is the base: higher means longer, closer and stronger. Meteor
+    gets a bonus because it is the only satellite here that produces an image,
+    and there are ~3 of its passes a day against ~60 Orbcomm ones — losing an
+    Orbcomm pass costs far less than losing the one picture of the night.
+    """
+    value = float(p.max_elevation)
+    if p.satellite.startswith("METEOR"):
+        value += IMAGING_BONUS
+    return value
 
 
 def _refresh_location(force_report: bool = False) -> tuple:
@@ -188,13 +269,44 @@ def _progress_reporter(p, passlog=None):
 
         if elapsed >= state["next_live"]:
             state["next_live"] = elapsed + LIVE_INTERVAL_S
-            post_live(
+            # Off the recording thread. Measured 22. 7.: this POST takes
+            # 190-410 ms to Render, and at LIVE_INTERVAL_S = 2 s that is 13 %
+            # of wall time during which nothing reads the USB pipe — librtlsdr
+            # silently drops those samples. Three passes lost 13.2/13.4/13.6 %
+            # of their samples that way, which broke symbol timing and put
+            # every packet's checksum on the floor (PER 99-100 %) while the
+            # spectrum still looked perfect. The console is allowed to lag;
+            # the recording is not allowed to have holes.
+            _post_live_async(
                 state="recording", satellite=p.satellite, aos=p.aos, los=p.los,
                 elapsed_s=round(elapsed, 1), total_s=round(total, 1), snr=snr,
                 health=health.snapshot(recording=True),
             )
 
     return report
+
+
+def _post_live_async(**kwargs) -> None:
+    """
+    Fire a /station/live update without blocking the caller.
+
+    Never queues: if the previous update is still in flight the tick is
+    dropped, so a slow or unreachable app can cost the console freshness but
+    can never cost the recording samples or pile up threads.
+    """
+    if _live_inflight.is_set():
+        return
+    _live_inflight.set()
+
+    def run() -> None:
+        try:
+            post_live(**kwargs)
+        except Exception:
+            log.debug("live update failed — recording continues", exc_info=True)
+        finally:
+            _live_inflight.clear()
+
+    threading.Thread(target=run, name="post-live", daemon=True).start()
 
 
 def _sleep_with_heartbeat(seconds: float, state: str, p=None, note: Optional[str] = None) -> None:
@@ -262,9 +374,11 @@ def run() -> None:
         if wait_s > PRE_AOS_WAKE:
             _sleep_with_heartbeat(wait_s - PRE_AOS_WAKE, "waiting", nxt)
 
-        if nxt.satellite not in FREQUENCIES:
-            log.warning("No frequency for %s — skipping", nxt.satellite)
-            _sleep_with_heartbeat(60, "idle", note=f"no frequency for {nxt.satellite}")
+        if not recordable(nxt.satellite):
+            reason = ("ISS but ISS_ENABLED is off (bypass the filter first)"
+                      if is_iss(nxt.satellite) else f"no frequency for {nxt.satellite}")
+            log.warning("Skipping %s — %s", nxt.satellite, reason)
+            _sleep_with_heartbeat(60, "idle", note=reason)
             continue
         freq = center_freq_for(nxt.satellite)
 
@@ -334,6 +448,10 @@ def run() -> None:
         log.info("Decode: %s", result.notes)
         passlog.add("decode_finished" if result.success else "decode_failed", result.notes)
 
+        # Archive the products before anything can reclaim the directory — the
+        # decoded telemetry and images are the deliverable and must outlive the
+        # IQ (and the cap-driven deletion of old pass directories).
+        retention.archive_products(rec.pass_dir)
         retention.after_decode(rec.pass_dir, result.success, reason=result.notes)
         retention.enforce_cap(RECORDINGS_DIR, keep=rec.pass_dir)
         passlog.add(
@@ -364,8 +482,23 @@ def run() -> None:
             health=health.snapshot(),
         )
 
-        # Wait past LOS before looking for the next pass
-        _sleep_with_heartbeat(POST_PASS_COOLDOWN_S, "idle", note=result.notes)
+        # Wait past LOS before looking for the next pass — but never past the
+        # next pass's wake point. A blind 120 s idle here cost a Meteor on
+        # 22. 7.: the Orbcomm under it ended at 21:12, the cooldown ran to
+        # 21:14, and by then the Meteor was 5 minutes into its own pass.
+        _sleep_with_heartbeat(_cooldown_seconds(), "idle", note=result.notes)
+
+
+def _cooldown_seconds() -> float:
+    """POST_PASS_COOLDOWN_S, trimmed so it cannot swallow the next pass."""
+    try:
+        upcoming = _next_upcoming_pass()
+    except Exception:
+        return POST_PASS_COOLDOWN_S
+    if upcoming is None:
+        return POST_PASS_COOLDOWN_S
+    until_wake = (upcoming.aos - datetime.now(timezone.utc)).total_seconds() - PRE_AOS_WAKE
+    return max(0.0, min(POST_PASS_COOLDOWN_S, until_wake))
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from agent import orbcomm
+from agent import aprs, orbcomm
 from agent.recorder import read_meta
 
 log = logging.getLogger(__name__)
@@ -39,6 +39,12 @@ SATDUMP_APP_RESOURCES = Path("/Applications/SatDump.app/Contents/Resources")
 # 72k is the mode both Meteor M2-3 and M2-4 have been transmitting; M2-x also
 # has an 80k mode, hence the override.
 METEOR_PIPELINE = os.getenv("SATDUMP_METEOR_PIPELINE", "meteor_m2-x_lrpt")
+
+# Above this packet error rate an Orbcomm decode counts as failed, so retention
+# keeps the baseband instead of deleting it. Measured range on this station is
+# 0 % at TCA and ~18 % at the horizon, so the threshold is far above anything
+# a healthy pass produces and only catches genuine garbage.
+MAX_ACCEPTABLE_PER = float(os.getenv("MAX_ACCEPTABLE_PER", "50"))
 
 
 @dataclass
@@ -80,6 +86,8 @@ def _decode(pass_dir: Path) -> DecodeResult:
         return _decode_meteor(pass_dir, meta)
     if name.startswith("ORBCOMM"):
         return _decode_orbcomm(pass_dir, meta)
+    if name.startswith("ISS"):
+        return _decode_iss(pass_dir, meta)
     return DecodeResult(success=False, notes=f"no decoder for {satellite}")
 
 
@@ -167,5 +175,36 @@ def _decode_orbcomm(pass_dir: Path, meta: dict) -> DecodeResult:
     if ephem:
         notes += f", {ephem} ephemeris frame(s)"
 
+    # PER decides, not the packet count. A run can emit packets and still be
+    # garbage: 22. 7. a pass with avg SNR 17.8 dB decoded at PER 99 % and was
+    # reported as a success, so retention deleted its 2.94 GB of IQ and the
+    # failure became undiagnosable. Normal is 0 % at TCA, ~18 % at the horizon
+    # (see agent/orbcomm.py), so anything above MAX_ACCEPTABLE_PER is a failed
+    # decode that must keep its baseband for a manual re-run.
+    if per is not None and per > MAX_ACCEPTABLE_PER:
+        return DecodeResult(success=False, kind="telemetry", products=products,
+                            stats=stats,
+                            notes=f"{notes} — PER over {MAX_ACCEPTABLE_PER:.0f} %, keeping IQ")
+
+    return DecodeResult(success=True, kind="telemetry", products=products,
+                        stats=stats, notes=notes)
+
+
+def _decode_iss(pass_dir: Path, meta: dict) -> DecodeResult:
+    """ISS APRS: any decoded frame is a real success, unlike Orbcomm there is no
+    PER — a valid AX.25 frame either passed its CRC or was never emitted."""
+    products_dir = pass_dir / "products"
+    stats = aprs.decode(pass_dir, meta, products_dir)
+
+    if "error" in stats:
+        return DecodeResult(success=False, kind="telemetry", stats=stats,
+                            notes=f"iss aprs: {stats['error']}")
+
+    aprs.write_summary(products_dir, stats)
+    products = sorted(p for p in products_dir.iterdir() if p.is_file())
+    calls = stats.get("callsigns", [])
+    notes = f"iss aprs: {stats.get('packets', 0)} frame(s)"
+    if calls:
+        notes += f" from {', '.join(calls[:5])}"
     return DecodeResult(success=True, kind="telemetry", products=products,
                         stats=stats, notes=notes)

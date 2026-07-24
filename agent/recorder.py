@@ -23,6 +23,8 @@ without conversion.
 import json
 import logging
 import os
+import queue
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -38,6 +40,11 @@ DEFAULT_SAMPLE_RATE = 1_000_000  # Hz, used when the caller has no preference
 CHUNK_SECONDS = 0.5              # read granularity → callback fires ~2×/s
 BYTES_PER_SAMPLE = 4             # int16 I + int16 Q
 SNR_FFT_SAMPLES = 65_536         # per-chunk slice used for the SNR estimate
+# Chunks the reader thread may buffer ahead of the consumer. The consumer
+# (disk write + SNR) runs ~200× faster than real time, so this stays near
+# empty; it only absorbs a transient stall (e.g. a slow disk write) without
+# ever making the reader wait, which is what would reintroduce sample loss.
+SDR_QUEUE_CHUNKS = 16
 
 log = logging.getLogger(__name__)
 
@@ -162,25 +169,77 @@ def read_meta(pass_dir: Path) -> dict:
 # ── SDR capture ───────────────────────────────────────────────────────────────
 
 def _sdr_chunks(frequency_hz: int, sample_rate: int, total_samples: int):
-    """Yield int16 interleaved IQ chunks straight from the dongle."""
+    """Yield int16 interleaved IQ chunks straight from the dongle, gaplessly.
+
+    A dedicated reader thread does nothing but call read_bytes() back to back;
+    the conversion, disk write and SNR estimate all happen on the consumer
+    side. That separation is the whole point (22./23. 7.): when read and
+    process shared one thread, the ~0.5 % of wall time spent processing between
+    reads was time nothing drained the USB pipe, and librtlsdr dropped samples
+    into that gap. At 1.2288 Msps even ~0.4 % loss is a discontinuity every few
+    chunks, which breaks the differential SDPSK phase and put Orbcomm PER at
+    99 % while the same pass recorded by the upstream tool decoded at 7-16 %.
+    Back-to-back reads with no work between them measured 0.0 % loss on this
+    dongle, so the reader thread does exactly and only that.
+    """
     from rtlsdr import RtlSdr  # imported lazily — not needed in mock/web-app
 
     sdr = RtlSdr()
+    q: queue.Queue = queue.Queue(maxsize=SDR_QUEUE_CHUNKS)
+    stop = threading.Event()
+    error: list = []
+    chunk_samples = _chunk_samples(sample_rate)
+
+    def reader() -> None:
+        try:
+            _configure_sdr(sdr, frequency_hz, sample_rate)
+            read = 0
+            while read < total_samples and not stop.is_set():
+                n = min(chunk_samples, total_samples - read)
+                n = max(n - n % 512, 512)  # librtlsdr wants a multiple of 512
+                # Raw bytes only — no conversion here. Keeping this loop free of
+                # any work between reads is what keeps the capture gapless.
+                data = sdr.read_bytes(2 * n)
+                # Hand off without ever blocking the next read indefinitely: if
+                # the consumer stalls the queue fills, but a stop still unblocks.
+                while not stop.is_set():
+                    try:
+                        q.put(data, timeout=0.5)
+                        break
+                    except queue.Full:
+                        continue
+                read += n
+        except Exception as e:  # surface to the consumer, never die silently
+            error.append(e)
+        finally:
+            try:
+                q.put_nowait(None)  # sentinel: reader is done
+            except queue.Full:
+                pass
+
+    thread = threading.Thread(target=reader, name="sdr-reader", daemon=True)
+    thread.start()
     try:
-        _configure_sdr(sdr, frequency_hz, sample_rate)
-        chunk_samples = _chunk_samples(sample_rate)
-        read = 0
-        while read < total_samples:
-            n = min(chunk_samples, total_samples - read)
-            n = max(n - n % 512, 512)  # librtlsdr wants a multiple of 512
-            # read_bytes gives the raw uint8 pairs; converting those directly
-            # to int16 skips pyrtlsdr's float64 round-trip, which matters at
-            # 1.2288 Msps.
-            raw = np.frombuffer(sdr.read_bytes(2 * n), dtype=np.uint8)
+        while True:
+            raw_bytes = q.get()
+            if raw_bytes is None:
+                break
+            # Convert on the consumer thread: uint8 pairs → int16 IQ, skipping
+            # pyrtlsdr's float64 round-trip, which matters at 1.2288 Msps.
+            raw = np.frombuffer(raw_bytes, dtype=np.uint8)
             yield (raw.astype(np.int16) - 127) << 7
-            read += n
     finally:
+        # On early exit, release the reader from a full queue before joining.
+        stop.set()
+        try:
+            while True:
+                q.get_nowait()
+        except queue.Empty:
+            pass
+        thread.join(timeout=5)
         sdr.close()
+    if error:
+        raise error[0]
 
 
 def _configure_sdr(sdr, frequency_hz: int, sample_rate: int) -> None:
