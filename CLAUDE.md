@@ -89,6 +89,12 @@ ground-station/
   filter sits ahead of the LNA, so 88-108 MHz reads ~10-15 dB above noise on a
   perfectly healthy chain. Measured 22. 7. and misread as a dead antenna for an
   hour. Test in band, bias tee on, `SDR_GAIN=20.7`.
+- **ISS APRS (145.825 MHz) is opt-in via `ISS_ENABLED=1`.** It is out of the
+  FBP-137s passband, so it is only recordable with the filter physically
+  bypassed; left always-on, a ~87° ISS pass would outrank every 137 MHz sat in
+  the value selection and record noise. Decoded by `agent/aprs.py` (FM demod →
+  direwolf's `atest`, AFSK1200/AX.25). ISS names from SatNOGS are unstable
+  ("ISS" vs "ISS (ZARYA)"), so everything keys off the `is_iss()` prefix.
 - **`pyrtlsdr` needs `DYLD_LIBRARY_PATH=/opt/homebrew/lib`.** ctypes does not
   search Homebrew's prefix on Apple Silicon, and `recorder.py` imports `rtlsdr`
   *lazily* — so a misconfigured agent starts cleanly and only fails at AOS,
@@ -133,6 +139,9 @@ pip install -r requirements.txt
 
 # Install RTL-SDR driver (Mac)
 brew install librtlsdr
+
+# Install direwolf for ISS APRS decoding (provides `atest`)
+brew install direwolf
 rtl_test          # verify dongle is detected
 
 # Install noaa-apt decoder

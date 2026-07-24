@@ -104,6 +104,29 @@ df -h ~ | tail -1; du -sh ~/Documents/satelite_tracker/recordings/
 Drž `RECORDINGS_MAX_GB` aspoň o 4 GB pod volným místem, ať se vejde rozdělaný
 průlet (~3 GB).
 
+## ISS APRS (145.825 MHz) — opt-in přes ISS_ENABLED
+
+ISS vysílá APRS digipeater na 145.825 MHz, což je **mimo pásmo filtru
+FBP-137s**. Zachytit ho jde jen když filtr fyzicky přemostíš (LNA nech, je
+širokopásmová 50 MHz–4 GHz, bias tee zapnutý). Postup pro konkrétní ISS průlet:
+
+1. Přemosti filtr: `anténa → LNA → dongle`, bez FBP-137s v cestě.
+2. Spusť agenta se zapnutým ISS: přidej `ISS_ENABLED=1` do spouštěcího `env`.
+3. Po ISS průletu filtr vrať a agenta spusť bez `ISS_ENABLED`.
+
+**Proč je to opt-in.** Bez `ISS_ENABLED` (default) agent ISS ignoruje. Kdyby byl
+pořád zapnutý, vysoký ISS průlet (dosahují ~87°) by ve výběru podle hodnoty
+přebil každý 137MHz satelit, zabral dongle a nahrával šum přes filtr. Proto se
+ISS zapíná jen na session, kdy je filtr venku.
+
+Dekódování dělá `agent/aprs.py`: baseband IQ → FM demodulace → `atest`
+(z **direwolf**, `brew install direwolf`) → AX.25/APRS rámce. Volačky, pozice a
+komentáře jsou v čistém textu, na rozdíl od šifrovaného Orbcommu. Úspěch je
+libovolný platný rámec (žádný PER — rámec buď prošel CRC, nebo se neobjevil).
+
+Jména ISS jsou ze SatNOGS nestabilní („ISS" živě, „ISS (ZARYA)" ve fixture),
+takže všechno kolem ISS klíčuje na prefix `is_iss()`, ne na přesné jméno.
+
 ## Anténa: jak ji NEtestovat
 
 Stanice má v cestě **FBP-137s**, pásmovou propust na 137 MHz, a **LNA napájenou

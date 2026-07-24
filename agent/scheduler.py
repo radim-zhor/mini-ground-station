@@ -61,9 +61,19 @@ FREQUENCIES: dict[str, int] = {
     "ORBCOMM FM 112": 137_662_500,
     "ORBCOMM FM 113": 137_662_500,
     "ORBCOMM FM 116": 137_662_500,
-    # ISS — APRS digipeater; outside the filter passband (bypass it)
-    "ISS (ZARYA)": 145_825_000,
+    # ISS is deliberately NOT here — it is handled by is_iss()/center_freq_for
+    # and gated behind ISS_ENABLED, see below.
 }
+
+# ISS APRS digipeater downlink. It sits at 145.825 MHz, outside the FBP-137s
+# passband, so it is only receivable when the filter has been physically
+# bypassed. Recording it is therefore opt-in (ISS_ENABLED): left on by default,
+# a high ISS pass (they reach ~87°) would outrank every 137 MHz sat in the
+# value-based selection, grab the dongle, and record noise through the filter.
+# The satellite's name from SatNOGS is unstable ("ISS" live, "ISS (ZARYA)" in
+# the fixture), so everything ISS keys off the is_iss() prefix, never an exact
+# name. The APRS name/comment is broadcast in the clear, unlike Orbcomm.
+ISS_FREQ_HZ = 145_825_000
 
 # Capture sample rate (Hz) per satellite family. Wide enough for the signal
 # plus Doppler, narrow enough not to write more bytes than necessary — at
@@ -120,7 +130,29 @@ def center_freq_for(satellite: str) -> int:
     """Where to park the dongle — not always the satellite's own downlink."""
     if satellite.upper().startswith("ORBCOMM"):
         return ORBCOMM_CENTER_HZ
+    if is_iss(satellite):
+        return ISS_FREQ_HZ
     return FREQUENCIES[satellite]
+
+
+def is_iss(satellite: str) -> bool:
+    """True for any ISS name variant — SatNOGS returns "ISS", the fixture
+    "ISS (ZARYA)", so match on the prefix rather than an exact name."""
+    return satellite.upper().startswith("ISS")
+
+
+def iss_enabled() -> bool:
+    """ISS is recorded only when the operator has bypassed the FBP-137s filter
+    and set ISS_ENABLED=1 for the session (145.825 MHz is out of band)."""
+    return os.getenv("ISS_ENABLED", "0") != "0"
+
+
+def recordable(satellite: str) -> bool:
+    """Whether this pass should be recorded at all. ISS only when the filter is
+    bypassed; everything else must have a known 137 MHz downlink."""
+    if is_iss(satellite):
+        return iss_enabled()
+    return satellite in FREQUENCIES
 
 
 def notify_upcoming(p) -> None:
@@ -162,7 +194,7 @@ def _next_upcoming_pass():
         (
             p
             for p in get_cached_passes()
-            if p.los > now and p.satellite in FREQUENCIES
+            if p.los > now and recordable(p.satellite)
         ),
         key=lambda p: p.aos,
     )
@@ -342,9 +374,11 @@ def run() -> None:
         if wait_s > PRE_AOS_WAKE:
             _sleep_with_heartbeat(wait_s - PRE_AOS_WAKE, "waiting", nxt)
 
-        if nxt.satellite not in FREQUENCIES:
-            log.warning("No frequency for %s — skipping", nxt.satellite)
-            _sleep_with_heartbeat(60, "idle", note=f"no frequency for {nxt.satellite}")
+        if not recordable(nxt.satellite):
+            reason = ("ISS but ISS_ENABLED is off (bypass the filter first)"
+                      if is_iss(nxt.satellite) else f"no frequency for {nxt.satellite}")
+            log.warning("Skipping %s — %s", nxt.satellite, reason)
+            _sleep_with_heartbeat(60, "idle", note=reason)
             continue
         freq = center_freq_for(nxt.satellite)
 

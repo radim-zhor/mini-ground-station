@@ -75,9 +75,19 @@ def test_dispatches_orbcomm_to_the_vendored_decoder(pass_dir, monkeypatch):
 
 
 def test_unknown_satellite_is_reported_not_raised(pass_dir):
+    result = decoder.decode(pass_dir("NOAA 19"))
+    assert result.success is False
+    assert "no decoder for NOAA 19" in result.notes
+
+
+def test_dispatches_iss_to_aprs(pass_dir):
+    # ISS routes to the APRS decoder (both name variants). With no real frames
+    # in the fixture it fails cleanly — the point is that it is handled, not
+    # reported as "no decoder".
     result = decoder.decode(pass_dir("ISS (ZARYA)"))
     assert result.success is False
-    assert "no decoder for ISS (ZARYA)" in result.notes
+    assert "iss aprs" in result.notes
+    assert "no decoder" not in result.notes
 
 
 def test_missing_meta_is_reported(tmp_path):
