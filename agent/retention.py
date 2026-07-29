@@ -72,6 +72,27 @@ def archive_products(pass_dir: Path, harvest_dir: Optional[Path] = None) -> int:
     return copied
 
 
+def archive_raw_iq(pass_dir: Path, harvest_dir: Optional[Path] = None) -> int:
+    """Also copy the raw .cs16 into the harvest — used for small, precious passes
+    (ISS: ~420 MB) where the baseband is worth keeping even after a successful
+    decode deletes it, so it can be re-decoded later. Never raises."""
+    harvest = harvest_dir or HARVEST_DIR
+    dest = harvest / pass_dir.name
+    copied = 0
+    try:
+        for iq in sorted(pass_dir.glob("*.cs16")):
+            target = dest / iq.name
+            if target.exists() and target.stat().st_size == iq.stat().st_size:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(iq, target)
+            copied += 1
+            log.info("Harvest: kept raw IQ %s (%.0f MB)", iq.name, iq.stat().st_size / 1e6)
+    except Exception:
+        log.exception("Archiving raw IQ of %s failed — pass continues", pass_dir.name)
+    return copied
+
+
 def max_bytes() -> int:
     """Size cap for `recordings/`, from RECORDINGS_MAX_GB (default 20 GB)."""
     try:

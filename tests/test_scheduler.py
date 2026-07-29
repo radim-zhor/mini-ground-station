@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import agent.scheduler as scheduler
+from agent import kostka
 
 
 def _fake_pass():
@@ -63,7 +64,32 @@ def test_sample_rate_per_satellite_family():
     assert scheduler.sample_rate_for("ORBCOMM FM 118") == 1_228_800
     assert scheduler.sample_rate_for("METEOR M2-4") == 1_000_000
     assert scheduler.sample_rate_for("ISS (ZARYA)") == 250_000
+    assert scheduler.sample_rate_for("KOSTKA") == 250_000
     assert scheduler.sample_rate_for("SOMETHING NEW") == scheduler.DEFAULT_SAMPLE_RATE
+
+
+def test_kostka_is_only_recordable_with_the_filter_bypassed(monkeypatch):
+    # 436.870 MHz is outside the FBP-137s passband. Recording it with the
+    # filter in the path captures noise *and* shadows the 137 MHz satellite
+    # passing underneath — so it stays off until the operator says otherwise.
+    monkeypatch.delenv("KOSTKA_ENABLED", raising=False)
+    assert scheduler.recordable("KOSTKA") is False
+
+    monkeypatch.setenv("KOSTKA_ENABLED", "1")
+    assert scheduler.recordable("KOSTKA") is True
+    assert scheduler.is_uhf("KOSTKA") and scheduler.is_uhf("ISS (ZARYA)")
+    assert not scheduler.is_uhf("METEOR M2-4")
+
+
+def test_kostka_is_recorded_off_centre_to_dodge_the_dc_spike():
+    # The signal is only ~20 kHz wide, so the R820T's DC spike sitting exactly
+    # at the tuned frequency would land in the middle of it.
+    centre = scheduler.center_freq_for("KOSTKA")
+    assert centre == scheduler.KOSTKA_CENTER_HZ
+    assert centre < kostka.KOSTKA_DOWNLINK_HZ
+    offset = kostka.KOSTKA_DOWNLINK_HZ - centre
+    # Inside the recorded band, and clear of the signal plus its Doppler.
+    assert 30_000 < offset < scheduler.sample_rate_for("KOSTKA") / 2
 
 
 def test_every_scheduled_satellite_has_a_capture_rate():

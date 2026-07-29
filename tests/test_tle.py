@@ -10,7 +10,10 @@ from shared import tle
 _FIXTURE = json.loads(
     (Path(__file__).parent / "fixtures" / "satellites_tle.json").read_text()
 )
-TRACKED = {e["tle0"].lstrip("0 ") for e in _FIXTURE}
+# Through display_name(), not tle0: a satellite the station renames on load
+# (KOSTKA, which SatNOGS still carries unnamed as "OBJECT BU") must appear here
+# under the name the rest of the code keys off.
+TRACKED = {tle.display_name(e) for e in _FIXTURE}
 
 
 def test_load_satellites_parses_tracked_birds():
@@ -18,12 +21,32 @@ def test_load_satellites_parses_tracked_birds():
     assert {s.name for s in sats} == TRACKED
 
 
-def test_tracked_set_covers_meteor_orbcomm_and_iss():
-    # The station tracks three families; losing one silently would gut the
+def test_tracked_set_covers_meteor_orbcomm_iss_and_kostka():
+    # The station tracks four families; losing one silently would gut the
     # pass schedule, so assert the mix explicitly.
     assert {"METEOR M2-3", "METEOR M2-4"} <= TRACKED
     assert sum(n.startswith("ORBCOMM") for n in TRACKED) >= 10
     assert any(n.startswith("ISS") for n in TRACKED)
+    assert "KOSTKA" in TRACKED
+
+
+def test_kostka_is_matched_by_sat_id_not_by_name_or_norad():
+    # The whole point of the sat_id: KOSTKA has no name in the SatNOGS feed
+    # ("0 OBJECT BU") and two different catalogue numbers — 98395 in the
+    # metadata, 69935 inside the TLE lines. Both will change; the sat_id will
+    # not. If this ever regresses, the satellite silently stops being tracked.
+    entry = next(e for e in _FIXTURE if e["sat_id"] == tle.KOSTKA_SAT_ID)
+    assert entry["tle0"] == "0 OBJECT BU"
+    assert tle.display_name(entry) == "KOSTKA"
+    assert tle._tracked({"sat_id": tle.KOSTKA_SAT_ID, "norad_cat_id": 12345})
+
+
+def test_kostka_tle_lines_are_found_under_our_name():
+    # The decoder asks for the TLE by the name the station uses, not by tle0.
+    lines = tle.tle_lines("KOSTKA")
+    assert lines is not None
+    assert lines[0] == "KOSTKA"
+    assert lines[1].startswith("1 ")
 
 
 def test_load_satellites_strips_leading_zero():
