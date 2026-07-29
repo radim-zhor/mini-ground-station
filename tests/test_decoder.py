@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from agent import decoder, orbcomm
+from agent import decoder, kostka, orbcomm
 
 
 @pytest.fixture
@@ -88,6 +88,40 @@ def test_dispatches_iss_to_aprs(pass_dir):
     assert result.success is False
     assert "iss aprs" in result.notes
     assert "no decoder" not in result.notes
+
+
+def test_dispatches_kostka_to_gr_satellites(pass_dir):
+    # Same shape as the ISS case: KOSTKA must reach its own decoder, and fail
+    # there for a stated reason rather than falling through to "no decoder".
+    result = decoder.decode(pass_dir("KOSTKA", center_freq_hz=436_820_000,
+                                     sample_rate=250_000))
+    assert result.success is False
+    assert result.notes.startswith("kostka:")
+    assert "no decoder" not in result.notes
+
+
+def test_missing_gr_satellites_is_a_note_not_a_crash(pass_dir, monkeypatch):
+    monkeypatch.setattr(kostka, "is_available", lambda: False)
+    result = decoder.decode(pass_dir("KOSTKA"))
+
+    assert result.success is False
+    assert "gr_satellites not found" in result.notes
+
+
+def test_kostka_success_reports_frames_and_removed_doppler(pass_dir, monkeypatch):
+    monkeypatch.setattr(kostka, "decode", lambda *a, **kw: {
+        "packets": 3,
+        "frames": [{"from": "OK0KOS", "to": "CQ", "bytes": 42, "info": "hello"}],
+        "callsigns": ["OK0KOS"],
+        "doppler": {"from_tle": True, "shift_peak_hz": 9800.0},
+    })
+    result = decoder.decode(pass_dir("KOSTKA"))
+
+    assert result.success is True
+    assert result.kind == "telemetry"
+    assert "3 AX.25 frame(s)" in result.notes
+    assert "OK0KOS" in result.notes
+    assert "Doppler ±9.8 kHz removed" in result.notes
 
 
 def test_missing_meta_is_reported(tmp_path):

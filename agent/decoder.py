@@ -7,6 +7,8 @@ collect whatever it produced into ``<pass>/products/``.
 
     METEOR  → satdump meteor_m2-x_lrpt   → PNG images
     ORBCOMM → orbcomm-receiver/file_decoder.py → frames, PER, ephemeris
+    ISS     → direwolf atest              → APRS frames
+    KOSTKA  → gr_satellites               → 9k6 G3RUH AX.25 frames
 
 Two rules hold for every path through here:
 
@@ -24,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from agent import aprs, orbcomm
+from agent import aprs, kostka, orbcomm
 from agent.recorder import read_meta
 
 log = logging.getLogger(__name__)
@@ -88,6 +90,8 @@ def _decode(pass_dir: Path) -> DecodeResult:
         return _decode_orbcomm(pass_dir, meta)
     if name.startswith("ISS"):
         return _decode_iss(pass_dir, meta)
+    if name.startswith("KOSTKA"):
+        return _decode_kostka(pass_dir, meta)
     return DecodeResult(success=False, notes=f"no decoder for {satellite}")
 
 
@@ -206,5 +210,33 @@ def _decode_iss(pass_dir: Path, meta: dict) -> DecodeResult:
     notes = f"iss aprs: {stats.get('packets', 0)} frame(s)"
     if calls:
         notes += f" from {', '.join(calls[:5])}"
+    return DecodeResult(success=True, kind="telemetry", products=products,
+                        stats=stats, notes=notes)
+
+
+def _decode_kostka(pass_dir: Path, meta: dict) -> DecodeResult:
+    """KOSTKA 9k6 G3RUH AX.25 via gr-satellites.
+
+    Like ISS APRS and unlike Orbcomm there is no packet error rate to weigh: a
+    frame reaching the KISS output has already passed its CRC inside
+    gr-satellites, so one frame is a real contact and zero frames is a failure
+    that keeps the IQ.
+    """
+    products_dir = pass_dir / "products"
+    stats = kostka.decode(pass_dir, meta, products_dir)
+
+    if "error" in stats:
+        return DecodeResult(success=False, kind="telemetry", stats=stats,
+                            notes=f"kostka: {stats['error']}")
+
+    kostka.write_summary(products_dir, stats)
+    products = sorted(p for p in products_dir.iterdir() if p.is_file())
+    notes = f"kostka: {stats.get('packets', 0)} AX.25 frame(s)"
+    calls = stats.get("callsigns", [])
+    if calls:
+        notes += f" from {', '.join(calls[:5])}"
+    doppler = stats.get("doppler") or {}
+    if doppler.get("shift_peak_hz"):
+        notes += f", Doppler ±{doppler['shift_peak_hz'] / 1000:.1f} kHz removed"
     return DecodeResult(success=True, kind="telemetry", products=products,
                         stats=stats, notes=notes)

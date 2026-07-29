@@ -27,6 +27,7 @@ from agent import health, retention
 from agent.client import post_contact, post_event, post_live, post_observer, retry_pending
 from agent.decoder import decode
 from agent.events import PassLog
+from agent.kostka import KOSTKA_CENTER_HZ
 from agent.location import detect_location
 from agent.recorder import BYTES_PER_SAMPLE, RECORDINGS_DIR, record_iq
 from shared.tle import get_cached_passes, set_observer
@@ -73,7 +74,21 @@ FREQUENCIES: dict[str, int] = {
 # The satellite's name from SatNOGS is unstable ("ISS" live, "ISS (ZARYA)" in
 # the fixture), so everything ISS keys off the is_iss() prefix, never an exact
 # name. The APRS name/comment is broadcast in the clear, unlike Orbcomm.
-ISS_FREQ_HZ = 145_825_000
+# Default 145.825 MHz (2m). Configurable because the ISS APRS radio has moved
+# bands: the failed 2m HT was replaced by a 70cm one, and ARISS lists RS0ISS
+# APRS on 437.825 MHz as of 24. 7. 2026. Set ISS_FREQ_HZ=437825000 to chase it.
+ISS_FREQ_HZ = int(os.getenv("ISS_FREQ_HZ", "145825000"))
+
+# KOSTKA (VUT Brno / YSpace) — 9k6 GFSK G3RUH AX.25 on 436.870 MHz. Same story
+# as the ISS and gated the same way (KOSTKA_ENABLED): UHF is outside the
+# FBP-137s passband, so recording it through the filter would capture noise and
+# shadow whatever 137 MHz satellite was passing underneath.
+#
+# The downlink and the parking offset are defined in agent/kostka.py
+# (KOSTKA_DOWNLINK_HZ / KOSTKA_CENTER_HZ), because the decoder needs both of
+# them too — it mixes the signal from that offset down to DC while removing
+# Doppler. One definition means an override of KOSTKA_FREQ_HZ moves the
+# recording and the decode together, instead of only one of them.
 
 # Capture sample rate (Hz) per satellite family. Wide enough for the signal
 # plus Doppler, narrow enough not to write more bytes than necessary — at
@@ -85,7 +100,14 @@ SAMPLE_RATES: dict[str, int] = {
     # (1.2288 Msps = 256 × 4800 baud) — do not change without changing it too.
     "ORBCOMM": 1_228_800,
     # ISS 1200 baud AFSK packet — narrow, no reason to record a megahertz.
-    "ISS": 250_000,
+    # Overridable via ISS_SAMPLE_RATE: to hedge the uncertain UHF frequency
+    # (437.825 vs 437.550) record wide so the IQ captures either.
+    "ISS": int(os.getenv("ISS_SAMPLE_RATE", "250000")),
+    # KOSTKA 9k6 GFSK: the signal is ~20 kHz wide and Doppler at 436.87 MHz
+    # sweeps ±10 kHz, so ~40 kHz has to fit — plus the 50 kHz parking offset
+    # that keeps the DC spike off it. 250 ksps covers all of that with room to
+    # spare and still writes only ~600 MB for a 10-minute pass.
+    "KOSTKA": int(os.getenv("KOSTKA_SAMPLE_RATE", "250000")),
 }
 DEFAULT_SAMPLE_RATE = 1_000_000
 
@@ -132,6 +154,10 @@ def center_freq_for(satellite: str) -> int:
         return ORBCOMM_CENTER_HZ
     if is_iss(satellite):
         return ISS_FREQ_HZ
+    if is_kostka(satellite):
+        # Parked below the downlink so the R820T's DC spike stays out of a
+        # signal only ~20 kHz wide; agent/kostka.py mixes it back to DC.
+        return KOSTKA_CENTER_HZ
     return FREQUENCIES[satellite]
 
 
@@ -141,17 +167,39 @@ def is_iss(satellite: str) -> bool:
     return satellite.upper().startswith("ISS")
 
 
+def is_kostka(satellite: str) -> bool:
+    """True for KOSTKA. The name is one we assign ourselves in shared/tle.py —
+    SatNOGS still carries the satellite unnamed — so this is the one prefix
+    here that is guaranteed stable."""
+    return satellite.upper().startswith("KOSTKA")
+
+
 def iss_enabled() -> bool:
     """ISS is recorded only when the operator has bypassed the FBP-137s filter
     and set ISS_ENABLED=1 for the session (145.825 MHz is out of band)."""
     return os.getenv("ISS_ENABLED", "0") != "0"
 
 
+def kostka_enabled() -> bool:
+    """Same gate as the ISS, separate switch: 436.870 MHz is outside the
+    FBP-137s passband, so KOSTKA is only recordable with the filter physically
+    bypassed and a 70cm antenna on. KOSTKA_ENABLED=1 says that is the case."""
+    return os.getenv("KOSTKA_ENABLED", "0") != "0"
+
+
+def is_uhf(satellite: str) -> bool:
+    """Needs the FBP-137s bypassed and the 70cm antenna — ISS and KOSTKA."""
+    return is_iss(satellite) or is_kostka(satellite)
+
+
 def recordable(satellite: str) -> bool:
-    """Whether this pass should be recorded at all. ISS only when the filter is
-    bypassed; everything else must have a known 137 MHz downlink."""
+    """Whether this pass should be recorded at all. The UHF satellites only when
+    the filter is bypassed; everything else must have a known 137 MHz
+    downlink."""
     if is_iss(satellite):
         return iss_enabled()
+    if is_kostka(satellite):
+        return kostka_enabled()
     return satellite in FREQUENCIES
 
 
@@ -375,8 +423,12 @@ def run() -> None:
             _sleep_with_heartbeat(wait_s - PRE_AOS_WAKE, "waiting", nxt)
 
         if not recordable(nxt.satellite):
-            reason = ("ISS but ISS_ENABLED is off (bypass the filter first)"
-                      if is_iss(nxt.satellite) else f"no frequency for {nxt.satellite}")
+            if is_iss(nxt.satellite):
+                reason = "ISS but ISS_ENABLED is off (bypass the filter first)"
+            elif is_kostka(nxt.satellite):
+                reason = "KOSTKA but KOSTKA_ENABLED is off (bypass the filter first)"
+            else:
+                reason = f"no frequency for {nxt.satellite}"
             log.warning("Skipping %s — %s", nxt.satellite, reason)
             _sleep_with_heartbeat(60, "idle", note=reason)
             continue
@@ -452,6 +504,14 @@ def run() -> None:
         # decoded telemetry and images are the deliverable and must outlive the
         # IQ (and the cap-driven deletion of old pass directories).
         retention.archive_products(rec.pass_dir)
+        # UHF baseband is small (~420-600 MB at 250 ksps) and both UHF decode
+        # paths are young — keep the raw IQ regardless of decode outcome, so it
+        # can be re-decoded if the frames look off. For KOSTKA that is worth
+        # more than for the ISS: it is a satellite days old, whose published
+        # frequency and modulation are still a claim rather than a measurement,
+        # so an early recording may need decoding again with different settings.
+        if is_uhf(nxt.satellite):
+            retention.archive_raw_iq(rec.pass_dir)
         retention.after_decode(rec.pass_dir, result.success, reason=result.notes)
         retention.enforce_cap(RECORDINGS_DIR, keep=rec.pass_dir)
         passlog.add(

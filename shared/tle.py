@@ -45,6 +45,32 @@ ISS_NORAD_IDS = {25544}
 
 SATELLITE_NORAD_IDS = METEOR_NORAD_IDS | ORBCOMM_NORAD_IDS | ISS_NORAD_IDS
 
+# KOSTKA — 1U CubeSat of VUT Brno / team YSpace, launched on a Falcon 9 at the
+# turn of June/July 2026. 9k6 GFSK (G3RUH) AX.25 on 436.870 MHz, i.e. UHF: like
+# the ISS it is outside the FBP-137s passband and only recordable with the
+# filter bypassed.
+#
+# It is tracked by SatNOGS *sat_id*, not by NORAD ID and never by name, because
+# it currently has neither of those stable. Checked 29. 7. 2026, the SatNOGS TLE
+# feed carries it as:
+#
+#     tle0 "0 OBJECT BU", norad_cat_id 98395, tle1 says 69935
+#
+# — no name at all, SatNOGS's temporary ID in the metadata, and a *different*,
+# already-assigned catalogue number inside the TLE lines. Both numbers and the
+# name will change again as cataloguing settles; the sat_id is permanent.
+# The name is therefore forced to "KOSTKA" on load (SAT_NAME_OVERRIDES) so the
+# frequency table, the sample rate and the decoder dispatch — all of which key
+# off the satellite name — have something stable to match on.
+KOSTKA_SAT_ID = os.getenv("KOSTKA_SAT_ID", "PCVZ-1444-3446-1456-5852")
+
+# NORAD IDs are matched *in addition* to the sat_id, purely as a fallback for
+# the day SatNOGS drops or renumbers the entry. Neither is authoritative.
+KOSTKA_NORAD_IDS = {98395, 69935}
+
+SATELLITE_SAT_IDS = {KOSTKA_SAT_ID}
+SAT_NAME_OVERRIDES = {KOSTKA_SAT_ID: "KOSTKA"}
+
 CACHE_TTL_SECONDS = 12 * 3600  # refresh TLE every 12 hours
 PASSES_CACHE_TTL = 300          # recompute passes every 5 minutes
 # How far before "now" the pass search starts, so a pass already in progress
@@ -82,6 +108,28 @@ def _cache_path() -> Path:
     return CACHE_DIR / "satellites_tle.json"
 
 
+def _tracked(entry: dict) -> bool:
+    """Is this SatNOGS TLE entry one of ours? By NORAD ID, or by sat_id for the
+    satellites whose catalogue number is not settled yet (see KOSTKA_SAT_ID)."""
+    return (
+        entry.get("norad_cat_id") in SATELLITE_NORAD_IDS
+        or entry.get("sat_id") in SATELLITE_SAT_IDS
+        or entry.get("norad_cat_id") in KOSTKA_NORAD_IDS
+    )
+
+
+def display_name(entry: dict) -> str:
+    """The name the whole station knows a satellite by.
+
+    Normally SatNOGS' own tle0, minus its leading "0 ". For a freshly launched
+    object that has no name yet — KOSTKA is "0 OBJECT BU" — the override keyed
+    on the stable sat_id wins, because everything downstream (FREQUENCIES,
+    SAMPLE_RATES, the decoder dispatch) matches on the name.
+    """
+    override = SAT_NAME_OVERRIDES.get(entry.get("sat_id"))
+    return override or entry["tle0"].lstrip("0 ")
+
+
 def load_satellites() -> list[EarthSatellite]:
     CACHE_DIR.mkdir(exist_ok=True)
     cache = _cache_path()
@@ -92,11 +140,11 @@ def load_satellites() -> list[EarthSatellite]:
         resp = requests.get(SATNOGS_TLE_URL, timeout=10)
         resp.raise_for_status()
         all_tles = resp.json()
-        data = [e for e in all_tles if e.get("norad_cat_id") in SATELLITE_NORAD_IDS]
+        data = [e for e in all_tles if _tracked(e)]
         cache.write_text(json.dumps(data))
 
     return [
-        EarthSatellite(e["tle1"], e["tle2"], e["tle0"].lstrip("0 "), ts)
+        EarthSatellite(e["tle1"], e["tle2"], display_name(e), ts)
         for e in data
     ]
 
@@ -108,7 +156,10 @@ def tle_lines(name: str) -> Optional[tuple]:
     Decoders that are not skyfield-based need the TLE text itself — the
     vendored Orbcomm decoder feeds it to pyephem for Doppler compensation.
     Matching is case-insensitive and ignores spaces, because the same bird is
-    "ORBCOMM FM 118" in SatNOGS and "ORBCOMM FM118" almost everywhere else.
+    "ORBCOMM FM 118" in SatNOGS and "ORBCOMM FM118" almost everywhere else. It
+    goes through display_name(), so a satellite we renamed on load (KOSTKA) is
+    found under the name the rest of the station uses, not under its unnamed
+    SatNOGS tle0 — and the line0 returned is that same name.
     """
     def key(s: str) -> str:
         return s.replace(" ", "").upper()
@@ -118,8 +169,8 @@ def tle_lines(name: str) -> Optional[tuple]:
         return None
     try:
         for e in json.loads(cache.read_text()):
-            if key(e["tle0"].lstrip("0 ")) == key(name):
-                return (e["tle0"].lstrip("0 "), e["tle1"], e["tle2"])
+            if key(display_name(e)) == key(name):
+                return (display_name(e), e["tle1"], e["tle2"])
     except Exception:
         return None
     return None

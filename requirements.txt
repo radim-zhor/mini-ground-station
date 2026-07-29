@@ -10,6 +10,12 @@ alembic
 psycopg2-binary
 python-multipart
 
+# Decoders are external programs, never pip dependencies of this venv:
+#   SatDump (Meteor), direwolf/atest (ISS APRS), gr-satellites (KOSTKA — a
+#   GNU Radio out-of-tree module with no package anywhere, source build only),
+#   orbcomm-receiver/ (vendored). A missing one is a failed decode that keeps
+#   the IQ, not a broken agent. See CLAUDE.md for the install lines.
+
 # agent (requires librtlsdr: brew install librtlsdr)
 pyrtlsdr
 numpy

@@ -32,7 +32,10 @@ ground-station/
 │   ├── events.py      # the pass timeline (AOS, signal, decode, result)
 │   ├── health.py      # SDR/bias tee/gain/disk state for the console
 │   ├── decoder.py     # dispatcher: satdump (Meteor) / file_decoder.py (Orbcomm)
-│   └── orbcomm.py     # bridge from our .cs16 to the vendored Orbcomm decoder
+│   ├── orbcomm.py     # bridge from our .cs16 to the vendored Orbcomm decoder
+│   ├── aprs.py        # ISS APRS: FM demod → direwolf atest (AFSK1200/AX.25)
+│   ├── kostka.py      # KOSTKA: Doppler correction → gr-satellites (9k6 G3RUH)
+│   └── satyaml/       # gr-satellites SatYAML for satellites not in its DB
 ├── app/
 │   ├── main.py        # FastAPI entrypoint
 │   ├── routes/        # /passes, /pass, /contacts, /satellite/position, etc.
@@ -95,6 +98,28 @@ ground-station/
   the value selection and record noise. Decoded by `agent/aprs.py` (FM demod →
   direwolf's `atest`, AFSK1200/AX.25). ISS names from SatNOGS are unstable
   ("ISS" vs "ISS (ZARYA)"), so everything keys off the `is_iss()` prefix.
+- **KOSTKA (436.870 MHz) is opt-in via `KOSTKA_ENABLED=1`** — a 1U CubeSat of
+  VUT Brno / team YSpace, 9k6 GFSK G3RUH AX.25, decoded by `agent/kostka.py`
+  via gr-satellites. Same physical station config as ISS (filter bypassed, 70cm
+  dipole ~16 cm, gain 15.7) but a separate gate, because an ~87° ISS pass would
+  outrank KOSTKA (max ~40° from Brno) in the value selection.
+- **KOSTKA is tracked by SatNOGS `sat_id`, never by name or NORAD ID.** Checked
+  29. 7. 2026 the TLE feed carries it unnamed as `0 OBJECT BU` with
+  `norad_cat_id` 98395 while the TLE lines already say 69935 — both will change
+  again as cataloguing settles, the `sat_id` will not. `shared/tle.py` therefore
+  matches on the sat_id and *assigns* the name "KOSTKA"
+  (`SAT_NAME_OVERRIDES`), because frequency, sample rate and decoder dispatch
+  are all keyed by satellite name.
+- **KOSTKA is recorded 50 kHz below its downlink**, like Orbcomm is parked off
+  channel: the R820T's DC spike sits exactly at the tuned frequency and the
+  signal is only ~20 kHz wide, so tuning on it would put the spike in the middle.
+- **Doppler correction for UHF is ours, not the decoder's** (`agent/kostka.py`).
+  At 436 MHz a LEO pass sweeps ±10 kHz — half the occupied bandwidth of 9k6
+  GFSK — where the same excursion at 137 MHz is ±3 kHz and ignorable. The
+  correction interpolates the *frequency* per sample and integrates there:
+  interpolating an already-integrated phase between grid points makes the
+  corrected frequency piecewise constant and leaves a sawtooth residual
+  (measured 462 Hz against a 2 kHz/s ramp).
 - **`pyrtlsdr` needs `DYLD_LIBRARY_PATH=/opt/homebrew/lib`.** ctypes does not
   search Homebrew's prefix on Apple Silicon, and `recorder.py` imports `rtlsdr`
   *lazily* — so a misconfigured agent starts cleanly and only fails at AOS,
@@ -142,6 +167,23 @@ brew install librtlsdr
 
 # Install direwolf for ISS APRS decoding (provides `atest`)
 brew install direwolf
+
+# Install gr-satellites for KOSTKA (9k6 GFSK G3RUH AX.25). There is NO package:
+# not on PyPI, not in Homebrew, not in conda — it is a GNU Radio out-of-tree
+# module and the only supported install is a source build. Verified 29. 7. 2026.
+brew install gnuradio pybind11        # pybind11 is required and not pulled in
+# Python deps must land where GNU Radio's interpreter sees them. Brew's python
+# is externally managed, and gnuradio's own venv (libexec/venv) shares
+# site-packages with it, so this is the one place that works:
+/opt/homebrew/opt/python@3.14/bin/python3.14 -m pip install \
+    --break-system-packages construct requests websocket-client pyzmq scipy
+git clone --depth 1 https://github.com/daniestevez/gr-satellites.git
+cd gr-satellites && mkdir build && cd build
+cmake .. -DCMAKE_INSTALL_PREFIX=/opt/homebrew -DCMAKE_PREFIX_PATH=/opt/homebrew
+make -j"$(sysctl -n hw.ncpu)" && make install   # no sudo: /opt/homebrew is ours
+# The first gr_satellites run prints a wall of `gr::vmcircbuf ... shmat/shmget`
+# errors. That is GNU Radio probing shared-memory backends once and caching the
+# working one in ~/.config/gnuradio/prefs — the second run is silent.
 rtl_test          # verify dongle is detected
 
 # Install noaa-apt decoder
@@ -163,6 +205,7 @@ User-facing tutorials live in `docs/`:
 |---|---|
 | `docs/sdrpp-recording.md` | Jak nahrát přelet v SDR++ a dekódovat APT snímek přes `noaa-apt` |
 | `docs/bezobsluzny-provoz.md` | Jak nechat agenta nahrávat přes noc bez dozoru, a co se při tom tiše rozbije |
+| `docs/satelity-cheatsheet.md` | Cheat-sheet per typ družice: frekvence, HW, dekodér, háčky (Meteor/Orbcomm/ISS) |
 
 ## Environment variables
 
@@ -181,3 +224,11 @@ User-facing tutorials live in `docs/`:
 | `LNA_PRESENT` | agent | `0` when no LNA is in the path, so the bias-tee warning stays quiet (default on) |
 | `SATDUMP_BIN` | agent | Path to the satdump CLI (default: `satdump` in PATH, then the macOS .app) |
 | `SATDUMP_METEOR_PIPELINE` | agent | LRPT pipeline (default `meteor_m2-x_lrpt` = 72k; `meteor_m2-x_lrpt_80k` for the 80k mode) |
+| `ISS_ENABLED` | agent | `1` records the ISS — only with the FBP-137s bypassed |
+| `ISS_FREQ_HZ` | agent | ISS APRS downlink (default 145825000; 437825000 for the 70cm radio) |
+| `ISS_SAMPLE_RATE` | agent | ISS capture rate (default 250000) |
+| `KOSTKA_ENABLED` | agent | `1` records KOSTKA — only with the FBP-137s bypassed |
+| `KOSTKA_FREQ_HZ` | agent | KOSTKA downlink (default 436870000); moves both the recording and the decode |
+| `KOSTKA_SAMPLE_RATE` | agent | KOSTKA capture rate (default 250000) |
+| `KOSTKA_SAT_ID` | agent + app | SatNOGS sat_id KOSTKA is tracked by (default `PCVZ-1444-3446-1456-5852`) |
+| `KOSTKA_DEVIATION_HZ` | agent | FSK deviation passed to gr_satellites; empty = its default 5 kHz. First knob to turn if a healthy-looking pass decodes to nothing |

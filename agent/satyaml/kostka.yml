@@ -1,0 +1,32 @@
+#
+# KOSTKA — VUT Brno / YSpace, 1U CubeSat, launched turn of June/July 2026.
+#
+# gr-satellites' own database does not have this satellite (it is days old), so
+# agent/kostka.py passes this file to gr_satellites instead of a name or NORAD
+# ID. The catalogue number below is SatNOGS' temporary one and is not what the
+# station tracks by — see shared/tle.py, which keys on the sat_id.
+#
+# RF parameters from AMSAT ANS-186 (5. 7. 2026) and the IARU coordination:
+# 9600 baud GFSK, G3RUH scrambling, AX.25. Telemetry, SSDV image chunks, the
+# digipeater and the CW beacon all share this one downlink and are told apart by
+# the AX.25 frame, not by frequency.
+#
+# The recording handed to gr_satellites has already been Doppler-corrected and
+# mixed to 0 Hz by agent/kostka.py, so `frequency` here is documentation rather
+# than something the decode depends on.
+#
+name: KOSTKA
+alternative_names:
+  - OBJECT BU
+norad: 98395
+data:
+  &tlm Telemetry:
+    telemetry: ax25
+transmitters:
+  9k6 GFSK downlink:
+    frequency: 436.870e+6
+    modulation: FSK
+    baudrate: 9600
+    framing: AX.25 G3RUH
+    data:
+      - *tlm
