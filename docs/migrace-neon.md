@@ -129,12 +129,8 @@ PostgreSQL-specifické, takže stejný postup platí i pro jiného providera.
   Na free tieru je disk ephemerální, takže se obrázky ztratí při každém deployi
   bez ohledu na to, kde je databáze. Řádky v `contacts` zůstanou, jen odkazují
   na neexistující soubor. Řeší se to až externím úložištěm (R2/S3), ne Neonem.
-- **Zálohuj.** Neon free nemá point-in-time restore delší než pár dní. Data jsou
-  řádově kilobajty, takže denní dump z Macu stačí:
-
-  ```bash
-  pg_dump "$DATABASE_URL" -Fc -f ~/gs-backups/gs-$(date +%F).dump
-  ```
+- **Zálohuj.** Neon free nemá dlouhé point-in-time restore. Viz *Týdenní záloha*
+  níž — je hotová, stačí ji zapnout.
 
 ## Co se ztratí, když záloha není
 
@@ -142,3 +138,70 @@ Historie přeletů v `contacts` a poslední pozice stanice v `station_status`.
 Nic z toho není nenahraditelné: stanice si pozici zjistí sama při příštím
 běhu (`OBSERVER_MODE=auto`) a nové přelety začnou přibývat hned. Přijdeš
 o historii, ne o funkčnost.
+
+## Týdenní záloha
+
+`tools/gs-backup.sh` dumpne databázi jednou týdně na Mac. Nic z toho nesmí
+ležet v `~/Documents` — ten adresář je pod ochranou macOS TCC a proces
+spuštěný launchd tam nesmí (viz `docs/bezobsluzny-provoz.md`), takže skript
+běží z kopie v `~/.local/bin/`. Repo zůstává zdrojem pravdy; po každé úpravě
+skriptu je potřeba tu kopii obnovit.
+
+| Co | Kde |
+|---|---|
+| Zdroj skriptu (verzovaný) | `tools/gs-backup.sh` |
+| Spouštěná kopie | `~/.local/bin/gs-backup.sh` |
+| launchd job | `~/Library/LaunchAgents/com.radimzhor.gs-backup.plist` |
+| Zálohy a log | `~/gs-backups/` |
+| Přihlašovací údaje | `~/.config/ground-station/db.env` (chmod 600) |
+
+### Zapnutí
+
+Nejdřív připojovací řetězec do souboru, který přečte jen tvůj účet — heslo se
+tak nedostane do skriptu ani do historie shellu:
+
+```bash
+umask 077 && read -rs "U?Neon URL: " && printf 'DATABASE_URL="%s"\n' "$U" > ~/.config/ground-station/db.env && unset U && chmod 600 ~/.config/ground-station/db.env
+```
+
+Zkušební běh a zapnutí plánovače:
+
+```bash
+bash ~/.local/bin/gs-backup.sh && tail -2 ~/gs-backups/backup.log
+launchctl unload ~/Library/LaunchAgents/com.radimzhor.gs-backup.plist 2>/dev/null; launchctl load ~/Library/LaunchAgents/com.radimzhor.gs-backup.plist && launchctl list | grep gs-backup
+```
+
+Po úpravě `tools/gs-backup.sh` v repu:
+
+```bash
+install -m 755 tools/gs-backup.sh ~/.local/bin/gs-backup.sh
+```
+
+### Co skript hlídá
+
+Běží v neděli ve 3:00, drží 8 posledních záloh (~2 měsíce) a loguje do
+`~/gs-backups/backup.log`. Když je nastavená `NTFY_TOPIC`, pošle při selhání
+notifikaci na stejný kanál, který používá agent.
+
+Dumpuje do `.partial` a přejmenuje až po ověření, takže nedokončený běh nikdy
+nepřepíše poslední dobrou zálohu. Ověření **počítá řádky v COPY bloku**, ne
+velikost souboru — prázdná ale zmigrovaná databáze dá platný dump o 6710 B,
+který projde jak kontrolou velikosti, tak `pg_restore -l | grep TABLE DATA`,
+protože pg_dump vypisuje `TABLE DATA` i pro tabulku bez řádků. Bez počítání
+řádků by se rok zálohovalo prázdno a poznalo by se to až při obnově.
+
+Ověřeno 3. 8. 2026 proti PostgreSQL 18, všech pět cest:
+
+| Situace | Výsledek |
+|---|---|
+| Databáze s daty | exit 0, `OK … (25961 B, 68 kontaktů)` |
+| Prázdná (jen zmigrovaná) databáze | exit 1, `dump neobsahuje ani jeden kontakt`, soubor nevznikl |
+| Databáze nedostupná | exit 1, žádný `.partial` nezůstal, předchozí záloha netknutá |
+| Chybějící `db.env` | exit 1, `chybí …/db.env` |
+| 11 záloh v adresáři | zůstalo 8 nejnovějších |
+
+### Poslední záloha z Renderu
+
+`~/gs-backups/render-final-2026-08-03.dump` je stav Render databáze těsně
+před jejím smazáním (68 kontaktů, 14.–27. 7.). Je **záměrně pojmenovaná mimo
+vzor `gs-*.dump`**, aby ji rotace nesmazala, a je jen pro čtení.

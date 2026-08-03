@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Weekly database backup. Install to ~/Library/LaunchAgents/ and edit USERNAME.
+
+  Runs a copy of tools/gs-backup.sh placed in ~/.local/bin/, never the one in
+  the repo: ~/Documents is TCC-protected and launchd-spawned processes are
+  denied there.
+
+  StartCalendarInterval fires Sunday 03:00. If the Mac is asleep at that time
+  launchd runs the job once on the next wake, so a sleeping laptop only delays
+  the backup, it does not skip it.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.radimzhor.gs-backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/USERNAME/.local/bin/gs-backup.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- The script logs to ~/gs-backups/backup.log itself; these catch anything
+         that dies before that, such as a missing interpreter. -->
+    <key>StandardOutPath</key>
+    <string>/Users/USERNAME/gs-backups/launchd.out</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/USERNAME/gs-backups/launchd.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
