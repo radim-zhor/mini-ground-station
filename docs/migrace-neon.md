@@ -68,14 +68,36 @@ Musí vypsat `0005_add_pass_events (head)`.
 
 ## 4. Obnov data ze zálohy (pokud ji máš)
 
-Až po tom, co proběhly migrace:
+Až po tom, co proběhly migrace. **Restoruj výhradně datové tabulky** — dump
+obsahuje i `alembic_version`, kde už po migraci řádek je, a naivní
+`pg_restore --data-only` bez `-t` skončí na
+`duplicate key value violates unique constraint "alembic_version_pkc"`:
 
 ```bash
-pg_restore --no-owner --data-only -d "$NEW_DATABASE_URL" ~/gs-backup.dump
+pg_restore --no-owner --no-acl --data-only \
+    -t contacts -t station_status -d "$NEW_DATABASE_URL" ~/gs-backup.dump
 ```
 
-`--data-only` proto, že schéma už vytvořil Alembic; `--no-owner` proto, že
-vlastník role se mezi Renderem a Neonem liší.
+`--data-only` proto, že schéma už vytvořil Alembic; `--no-owner` a `--no-acl`
+proto, že vlastník role se mezi providery liší.
+
+Pak **musíš dorovnat sekvence**. `-t` vybere data tabulek, ale ne TOC položky
+`SEQUENCE SET`, takže `contacts_id_seq` zůstane na 1, zatímco nejvyšší `id`
+je třeba 68 — a první nový přelet by spadl na `contacts_pkey`:
+
+```bash
+psql "$NEW_DATABASE_URL" \
+    -c "SELECT setval('contacts_id_seq', (SELECT max(id) FROM contacts));" \
+    -c "SELECT setval('station_status_id_seq', (SELECT max(id) FROM station_status));"
+```
+
+Ověřeno 3. 8. 2026 proti PostgreSQL 18: po setval dostal nově vložený kontakt
+`id 69` a data zůstala netknutá.
+
+> `pg_dump`, `pg_restore` a `psql` na macOS dodává Homebrew balíček `libpq`,
+> který je keg-only — nejsou v PATH, volej je přes
+> `/opt/homebrew/opt/libpq/bin/`. Verze klienta musí být **stejná nebo vyšší
+> než verze serveru** (Render jel PostgreSQL 18).
 
 ## 5. Restartuj agenta
 
