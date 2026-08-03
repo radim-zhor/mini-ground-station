@@ -206,6 +206,7 @@ User-facing tutorials live in `docs/`:
 | `docs/sdrpp-recording.md` | Jak nahrát přelet v SDR++ a dekódovat APT snímek přes `noaa-apt` |
 | `docs/bezobsluzny-provoz.md` | Jak nechat agenta nahrávat přes noc bez dozoru, a co se při tom tiše rozbije |
 | `docs/satelity-cheatsheet.md` | Cheat-sheet per typ družice: frekvence, HW, dekodér, háčky (Meteor/Orbcomm/ISS) |
+| `docs/migrace-neon.md` | Přesun databáze z expirující Render free Postgres na Neon: kroky, zálohy, pasti |
 
 ## Environment variables
 
